@@ -1,0 +1,219 @@
+﻿using System;
+using System.IO.Ports;
+using System.Windows.Forms;
+
+namespace DENEME1
+{
+    public partial class MainForm : Form
+    {
+        public MainForm()
+        {
+            InitializeComponent();
+        }
+
+        // Form açılırken
+        void MainFormLoad(object sender, EventArgs e)
+        {
+            RefreshPorts();
+
+            btnDisconnect.Enabled = false;
+            btnConnect.Enabled = true;
+
+            // PC saatini kutuya yaz (1 sn’de bir güncelle)
+            timer1.Interval = 1000;
+            timer1.Enabled = true;
+        }
+
+        // Timer Tick: PC saatini textbox'a yaz
+        void Timer1Tick(object sender, EventArgs e)
+        {
+            // HH:mm:ss format
+            txtTimeSend.Text = DateTime.Now.ToString("HH:mm:ss");
+        }
+
+        // COM port listesini yenile
+        void RefreshPorts()
+        {
+            cmbPorts.Items.Clear();
+            string[] ports = SerialPort.GetPortNames();
+            Array.Sort(ports);
+            cmbPorts.Items.AddRange(ports);
+
+            if (cmbPorts.Items.Count > 0)
+                cmbPorts.SelectedIndex = 0;
+        }
+
+        void BtnRefreshClick(object sender, EventArgs e)
+        {
+            RefreshPorts();
+        }
+
+        // Bağlan
+        void BtnConnectClick(object sender, EventArgs e)
+        {
+            if (cmbPorts.SelectedItem == null)
+            {
+                MessageBox.Show("Önce bir COM port seç.");
+                return;
+            }
+
+            try
+            {
+                if (serialPort1.IsOpen) serialPort1.Close();
+
+                serialPort1.PortName = cmbPorts.SelectedItem.ToString();
+                serialPort1.BaudRate = 115200;
+                serialPort1.DataBits = 8;
+                serialPort1.Parity = Parity.None;
+                serialPort1.StopBits = StopBits.One;
+                serialPort1.NewLine = "\n"; // ReadLine için
+
+                serialPort1.Open();
+
+                btnConnect.Enabled = false;
+                btnDisconnect.Enabled = true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Port açılamadı:\n" + ex.Message);
+            }
+        }
+
+        // Kes
+        void BtnDisconnectClick(object sender, EventArgs e)
+        {
+            try
+            {
+                if (serialPort1.IsOpen) serialPort1.Close();
+            }
+            catch { }
+
+            btnConnect.Enabled = true;
+            btnDisconnect.Enabled = false;
+        }
+
+        // Eski "Gönder" (istersen dursun)
+        void BtnSendClick(object sender, EventArgs e)
+        {
+            if (!serialPort1.IsOpen)
+            {
+                MessageBox.Show("Önce COM portuna bağlan.");
+                return;
+            }
+
+            string line = txtSend.Text;
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                MessageBox.Show("Gönderilecek metni yaz.");
+                return;
+            }
+
+            serialPort1.Write(line.Trim() + "\n");
+        }
+
+        // SAATİ GÖNDER butonu
+        void BtnSetTimeClick(object sender, EventArgs e)
+        {
+            if (!serialPort1.IsOpen)
+            {
+                MessageBox.Show("Önce COM portuna bağlan.");
+                return;
+            }
+
+            string t = txtTimeSend.Text.Trim(); // "HH:mm:ss"
+            // Tiva tarafında bunu yakalayacağız:
+            // SETTIME=HH:MM:SS
+            serialPort1.Write("SETTIME=" + t + "\n");
+        }
+
+        // 3 KARAKTER METİN GÖNDER butonu
+        void BtnSetText3Click(object sender, EventArgs e)
+        {
+            if (!serialPort1.IsOpen)
+            {
+                MessageBox.Show("Önce COM portuna bağlan.");
+                return;
+            }
+
+            string s = txtText3Send.Text.Trim();
+
+            if (s.Length == 0) s = "   ";
+            if (s.Length > 3) s = s.Substring(0, 3);
+            if (s.Length < 3) s = s.PadRight(3);
+
+            // SETTXT=ABC
+            serialPort1.Write("SETTXT=" + s + "\n");
+        }
+
+        // Tiva'dan veri geldiğinde
+        void SerialPort1DataReceived(object sender, SerialDataReceivedEventArgs e)
+        {
+            string line;
+            try
+            {
+                line = serialPort1.ReadLine();
+            }
+            catch
+            {
+                return;
+            }
+
+            line = line.Trim();
+
+            // Beklediğimiz format örnek:
+            // TIME:12:34:56 TEMP:24.6 BTN:0
+            // veya BTN:1
+            // sadece TEMP de gelebilir ama biz hepsini parse edeceğiz
+
+            string timeVal = ExtractBetween(line, "TIME:", " ");
+            string tempVal = ExtractBetween(line, "TEMP:", " ");
+            string btnVal  = ExtractAfter(line, "BTN:");
+
+            this.BeginInvoke((Action)(() =>
+            {
+                // Sıcaklık label
+                if (!string.IsNullOrEmpty(tempVal))
+                    lblTemp.Text = "Sıcaklık: " + tempVal + " °C";
+
+                // Kart saati textbox (ReadOnly)
+                if (!string.IsNullOrEmpty(timeVal))
+                    txtTimeRx.Text = timeVal;
+
+                // Buton textbox (ReadOnly)
+                if (!string.IsNullOrEmpty(btnVal))
+                {
+                    btnVal = btnVal.Trim();
+                    if (btnVal.StartsWith("1"))
+                        txtBtnRx.Text = "Butona Basıldı";
+                    else
+                        txtBtnRx.Text = "";
+                }
+            }));
+        }
+
+        // --- yardımcı parse fonksiyonları ---
+        static string ExtractBetween(string src, string start, string endDelimiter)
+        {
+            int i = src.IndexOf(start);
+            if (i < 0) return "";
+            i += start.Length;
+
+            int j = src.IndexOf(endDelimiter, i);
+            if (j < 0) j = src.Length;
+
+            return src.Substring(i, j - i).Trim();
+        }
+
+        static string ExtractAfter(string src, string start)
+        {
+            int i = src.IndexOf(start);
+            if (i < 0) return "";
+            i += start.Length;
+            return src.Substring(i).Trim();
+        }
+
+        // ---- Sende hata veren event'ler: boş bırakıyoruz ----
+        void TextBox1TextChanged(object sender, EventArgs e) { }
+        void LblTempClick(object sender, EventArgs e) { }
+    }
+}
