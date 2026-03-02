@@ -1,0 +1,105 @@
+#include "driverlib.h"
+#include "device.h"
+
+// --- AYARLAR ---
+// DİKKAT: Adres 0x48 çalışmazsa 0x49 yapıp dene!
+#define TMP117_ADDR         0x48   
+#define TMP117_TEMP_REG     0x00   
+#define I2C_BASE            I2CA_BASE
+
+// --- GLOBAL DEĞİŞKENLER (Expressions ekranına ekle) ---
+float sicaklik_C = 0.0f;
+int16_t ham_veri = 0;
+uint16_t hata_kodu = 0; // 0: Sorun Yok, 1: NACK (Adres Yanlış/Kablo Bozuk)
+
+void initI2C(void);
+float readTMP117(void);
+
+void main(void)
+{
+    Device_init();
+    Device_initGPIO();
+    Interrupt_initModule();
+    Interrupt_initVectorTable();
+
+    initI2C();
+
+    EINT;
+    ERTM;
+
+    while(1)
+    {
+        // Sensörü oku
+        sicaklik_C = readTMP117();
+
+        // C2000 çok hızlıdır, gözle takip için yavaşlat
+        DEVICE_DELAY_US(500000); 
+    }
+}
+
+void initI2C(void)
+{
+    // GPIO32 -> SDA, GPIO33 -> SCL (Internal Pull-up AÇIK)
+    GPIO_setPinConfig(GPIO_32_I2CA_SDA);
+    GPIO_setPadConfig(32, GPIO_PIN_TYPE_OD | GPIO_PIN_TYPE_PULLUP);
+    GPIO_setQualificationMode(32, GPIO_QUAL_ASYNC);
+
+    GPIO_setPinConfig(GPIO_33_I2CA_SCL);
+    GPIO_setPadConfig(33, GPIO_PIN_TYPE_OD | GPIO_PIN_TYPE_PULLUP);
+    GPIO_setQualificationMode(33, GPIO_QUAL_ASYNC);
+
+    I2C_disableModule(I2C_BASE);
+    // 100kHz hız ayarı
+    I2C_initMaster(I2C_BASE, DEVICE_SYSCLK_FREQ, 100000, I2C_DUTYCYCLE_50);
+    I2C_setBitCount(I2C_BASE, I2C_BIT_8);
+    I2C_setSlaveAddress(I2C_BASE, TMP117_ADDR);
+    I2C_setEmulationMode(I2C_BASE, I2C_EMULATION_FREE_RUN);
+    I2C_enableModule(I2C_BASE);
+}
+
+float readTMP117(void)
+{
+    uint16_t msb, lsb;
+
+    // --- ADIM 1: Yazma (Register Seçimi) ---
+    while(I2C_getStopConditionStatus(I2C_BASE)); // Bus boş mu?
+
+    I2C_setSlaveAddress(I2C_BASE, TMP117_ADDR);
+    I2C_setDataCount(I2C_BASE, 1);
+    I2C_putData(I2C_BASE, TMP117_TEMP_REG);
+    I2C_setConfig(I2C_BASE, I2C_MASTER_SEND_MODE);
+    I2C_sendStartCondition(I2C_BASE);
+    I2C_sendStopCondition(I2C_BASE);
+
+    while(I2C_getStopConditionStatus(I2C_BASE)); // İşlemin bitmesini bekle
+
+    // HATA KONTROLÜ: Sensör cevap verdi mi?
+    // I2C Status Register (I2CSTR) içindeki NACK bitine bakıyoruz (Bit 4)
+    if(I2C_getStatus(I2C_BASE) & I2C_STS_NO_ACK) 
+    {
+        hata_kodu = 1; // HATA: Sensör "Ben yokum" dedi (NACK)
+        I2C_clearStatus(I2C_BASE, I2C_STS_NO_ACK); // Hatayı temizle ki sonraki turu deneyelim
+        return -999.0; // Hata olduğunu belli eden bir değer
+    }
+    else
+    {
+        hata_kodu = 0; // Her şey yolunda
+    }
+
+    // --- ADIM 2: Okuma ---
+    I2C_setDataCount(I2C_BASE, 2);
+    I2C_setConfig(I2C_BASE, I2C_MASTER_RECEIVE_MODE);
+    I2C_sendStartCondition(I2C_BASE);
+    I2C_sendStopCondition(I2C_BASE);
+
+    // Veri gelene kadar bekle
+    while(!(I2C_getStatus(I2C_BASE) & I2C_STS_REG_ACCESS_RDY));
+    msb = I2C_getData(I2C_BASE);
+
+    while(!(I2C_getStatus(I2C_BASE) & I2C_STS_REG_ACCESS_RDY));
+    lsb = I2C_getData(I2C_BASE);
+
+    // Birleştir ve Dönüştür
+    ham_veri = (int16_t)((msb << 8) | lsb);
+    return (float)ham_veri * 0.0078125f;
+}
