@@ -1,0 +1,113 @@
+// Gerekli Kütüphaneler (Projene C2000Ware'den dahil etmelisin)
+#include "driverlib.h"
+#include "device.h"
+
+// TMP117 Sabitleri
+#define TMP117_ADDR         0x48   // ADD0 pini toprağa bağlıysa adres 0x48
+#define TMP117_TEMP_REG     0x00   // Sıcaklık verisinin olduğu register
+#define I2C_BASE            I2CA_BASE // I2C Modül A kullanıyoruz
+
+// Global Değişkenler (Watch Window'dan izlemek için)
+float sicaklik_C = 0.0f;
+int16_t ham_veri = 0;
+
+// Fonksiyon Prototipleri
+void initI2C(void);
+float readTMP117(void);
+
+void main(void)
+{
+    // 1. Sistem ve Clock Ayarları
+    Device_init();
+    Device_initGPIO();
+
+    // 2. Interruptları devre dışı bırak (Basitlik için)
+    Interrupt_initModule();
+    Interrupt_initVectorTable();
+
+    // 3. I2C Ayarlarını Yap
+    initI2C();
+
+    // 4. Global Interruptları aç
+    EINT;
+    ERTM;
+
+    // Sonsuz Döngü
+    while(1)
+    {
+        // Sıcaklığı Oku
+        sicaklik_C = readTMP117();
+
+        // Biraz bekle (Örneğin 500ms - C2000 hızıyla ayarlanmalı)
+        DEVICE_DELAY_US(500000); 
+    }
+}
+
+// I2C Başlatma ve GPIO Ayarları
+void initI2C(void)
+{
+    // I2CA Pinlerini Ayarla (GPIO32 -> SDA, GPIO33 -> SCL)
+    // Not: LaunchPad veya ControlCARD pinout'una göre burayı kontrol et.
+    GPIO_setPinConfig(GPIO_32_I2CA_SDA);
+    GPIO_setPadConfig(32, GPIO_PIN_TYPE_OD); // Open Drain olmalı
+    GPIO_setQualificationMode(32, GPIO_QUAL_ASYNC);
+
+    GPIO_setPinConfig(GPIO_33_I2CA_SCL);
+    GPIO_setPadConfig(33, GPIO_PIN_TYPE_OD); // Open Drain olmalı
+    GPIO_setQualificationMode(33, GPIO_QUAL_ASYNC);
+
+    // I2C Modülünü Resetle ve Başlat
+    I2C_disableModule(I2C_BASE);
+    
+    // Standart Mod (100kbps), Sistem Clock'una göre ayarlanır
+    // DEVICE_SYSCLK_FREQ, device.h dosyasından gelir.
+    I2C_initMaster(I2C_BASE, DEVICE_SYSCLK_FREQ, 100000, I2C_DUTYCYCLE_50);
+    
+    I2C_setBitCount(I2C_BASE, I2C_BIT_8);
+    I2C_setSlaveAddress(I2C_BASE, TMP117_ADDR);
+    I2C_setEmulationMode(I2C_BASE, I2C_EMULATION_FREE_RUN);
+    
+    I2C_enableModule(I2C_BASE);
+}
+
+// TMP117'den Veri Okuma Fonksiyonu
+float readTMP117(void)
+{
+    uint16_t msb, lsb;
+
+    // ADIM 1: Hangi register'ı okuyacağımızı söyle (YAZMA İŞLEMİ)
+    // Bus'ın boş olmasını bekle
+    while(I2C_getStopConditionStatus(I2C_BASE)); 
+
+    I2C_setSlaveAddress(I2C_BASE, TMP117_ADDR);
+    I2C_setDataCount(I2C_BASE, 1); // 1 Byte göndereceğiz (Register adresi)
+    I2C_putData(I2C_BASE, TMP117_TEMP_REG); // 0x00 gönderiyoruz
+    I2C_setConfig(I2C_BASE, I2C_MASTER_SEND_MODE);
+    I2C_sendStartCondition(I2C_BASE);
+    I2C_sendStopCondition(I2C_BASE);
+
+    // İşlemin bitmesini bekle (Stop bit gönderilene kadar)
+    while(I2C_getStopConditionStatus(I2C_BASE));
+
+
+    // ADIM 2: Veriyi Oku (OKUMA İŞLEMİ)
+    I2C_setDataCount(I2C_BASE, 2); // 2 Byte okuyacağız (MSB + LSB)
+    I2C_setConfig(I2C_BASE, I2C_MASTER_RECEIVE_MODE);
+    I2C_sendStartCondition(I2C_BASE);
+    I2C_sendStopCondition(I2C_BASE);
+
+    // İlk byte'ı bekle (MSB)
+    while(!(I2C_getStatus(I2C_BASE) & I2C_STS_REG_ACCESS_RDY));
+    msb = I2C_getData(I2C_BASE);
+
+    // İkinci byte'ı bekle (LSB)
+    while(!(I2C_getStatus(I2C_BASE) & I2C_STS_REG_ACCESS_RDY));
+    lsb = I2C_getData(I2C_BASE);
+
+    // ADIM 3: Veriyi Birleştir ve Dönüştür
+    // TMP117 16-bit signed integer döndürür.
+    ham_veri = (int16_t)((msb << 8) | lsb);
+
+    // TMP117 çözünürlüğü: 1 LSB = 0.0078125 derece C
+    return (float)ham_veri * 0.0078125f;
+}
