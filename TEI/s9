@@ -1,0 +1,110 @@
+#include "driverlib.h"
+#include "device.h"
+
+// I2C-B Modülü ve Pinleri (GPIO 40/41)
+#define I2C_BASE    I2CB_BASE
+#define SLAVE_ADDR  0x48  // Sensör Adresi
+
+// --- YENİ EKLENEN DEĞİŞKENLER (Expressions'a ekle) ---
+float sicaklik_C = 0.0;
+int16_t ham_veri = 0;
+
+// Mevcut Değişkenler
+int durum = 99;           
+int iletisim_sonucu = 0;  
+
+void main(void)
+{
+    Device_init();
+    Device_initGPIO();
+    Interrupt_initModule();
+    Interrupt_initVectorTable();
+
+    // --- 1. PIN AYARLARI (Senin çalışan ayarların) ---
+    GPIO_setPinConfig(GPIO_40_I2CB_SDA);
+    GPIO_setPadConfig(40, GPIO_PIN_TYPE_OD | GPIO_PIN_TYPE_PULLUP);
+    GPIO_setQualificationMode(40, GPIO_QUAL_ASYNC);
+
+    GPIO_setPinConfig(GPIO_41_I2CB_SCL);
+    GPIO_setPadConfig(41, GPIO_PIN_TYPE_OD | GPIO_PIN_TYPE_PULLUP);
+    GPIO_setQualificationMode(41, GPIO_QUAL_ASYNC);
+
+    // --- 2. MODÜL AYARLARI ---
+    I2C_disableModule(I2C_BASE);
+    I2C_initMaster(I2C_BASE, DEVICE_SYSCLK_FREQ, 100000, I2C_DUTYCYCLE_50);
+    I2C_setBitCount(I2C_BASE, I2C_BIT_8);
+    // Adresi başta set ediyoruz
+    I2C_setSlaveAddress(I2C_BASE, SLAVE_ADDR); 
+    I2C_setEmulationMode(I2C_BASE, I2C_EMULATION_FREE_RUN);
+    I2C_enableModule(I2C_BASE);
+
+    EINT;
+    ERTM;
+
+    while(1)
+    {
+        // --- 3. HAT KONTROLÜ ---
+        if(I2C_isBusBusy(I2C_BASE))
+        {
+            durum = 1; // Hat meşgul
+        }
+        else
+        {
+            durum = 0; // Hat boş
+
+            // ====================================================
+            // ADIM A: "Sıcaklığı Oku" Komutu Gönder (Register 0x00)
+            // ====================================================
+            // 1 Byte veri göndereceğiz (0x00)
+            I2C_setDataCount(I2C_BASE, 1);
+            I2C_putData(I2C_BASE, 0x00); // 0x00 = Sıcaklık Register'ı
+            I2C_setConfig(I2C_BASE, I2C_MASTER_SEND_MODE);
+            
+            I2C_sendStartCondition(I2C_BASE);
+            I2C_sendStopCondition(I2C_BASE);
+
+            // Komutun gitmesi için çok kısa bekle
+            DEVICE_DELAY_US(500);
+
+            // ACK Kontrolü (Senin kodundaki gibi)
+            if(I2C_getStatus(I2C_BASE) & I2C_STS_NO_ACK)
+            {
+                iletisim_sonucu = 0; // HATA
+                I2C_clearStatus(I2C_BASE, I2C_STS_NO_ACK);
+            }
+            else
+            {
+                iletisim_sonucu = 1; // BAŞARILI, şimdi okuyabiliriz!
+
+                // ====================================================
+                // ADIM B: Veriyi Oku (2 Byte: MSB ve LSB)
+                // ====================================================
+                
+                // 2 Byte okuyacağız dedik
+                I2C_setDataCount(I2C_BASE, 2);
+                I2C_setConfig(I2C_BASE, I2C_MASTER_RECEIVE_MODE);
+                I2C_sendStartCondition(I2C_BASE);
+                I2C_sendStopCondition(I2C_BASE);
+
+                // --- BURASI ÇOK ÖNEMLİ (Bekleme Kısmı) ---
+                // 1. Byte (MSB) gelene kadar bekle
+                while(!(I2C_getStatus(I2C_BASE) & I2C_STS_RX_DATA_RDY));
+                uint16_t msb = I2C_getData(I2C_BASE);
+
+                // 2. Byte (LSB) gelene kadar bekle
+                while(!(I2C_getStatus(I2C_BASE) & I2C_STS_RX_DATA_RDY));
+                uint16_t lsb = I2C_getData(I2C_BASE);
+
+                // --- HESAPLAMA ---
+                // MSB ve LSB'yi birleştir
+                ham_veri = (int16_t)((msb << 8) | lsb);
+                
+                // TMP117 Formülü: Ham Veri * 0.0078125
+                sicaklik_C = (float)ham_veri * 0.0078125;
+            }
+        }
+
+        // Çok hızlı dönmesin diye bekleme
+        DEVICE_DELAY_US(500000); 
+    }
+}
