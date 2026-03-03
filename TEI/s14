@@ -1,0 +1,62 @@
+while(1)
+{
+    uint8_t msb = 0, lsb = 0;
+
+    // ---------------------------
+    // 1) TMP117'ye "hangi register" okuyacağını söyle (pointer = 0x00)
+    // ---------------------------
+    I2C_setSlaveAddress(I2CB_BASE, TMP117_ADDR);
+    I2C_setDataCount(I2CB_BASE, 1);
+    I2C_setConfig(I2CB_BASE, I2C_MASTER_SEND_MODE);
+
+    I2C_sendStartCondition(I2CB_BASE);
+    I2C_putData(I2CB_BASE, TMP117_REG_TEMP);   // 0x00
+    I2C_sendStopCondition(I2CB_BASE);
+
+    while((I2C_getStatus(I2CB_BASE) & I2C_STS_STOP_CONDITION) == 0) { }
+    I2C_clearStatus(I2CB_BASE, I2C_STS_STOP_CONDITION);
+
+    // Eğer NACK olduysa okumaya çalışma
+    if(I2C_getStatus(I2CB_BASE) & I2C_STS_NO_ACK)
+    {
+        I2C_clearStatus(I2CB_BASE, I2C_STS_NO_ACK);
+        sicaklikC = -999.0f;       // hata işareti
+        DEVICE_DELAY_US(500000);
+        continue;
+    }
+
+    // ---------------------------
+    // 2) 2 byte oku (MSB sonra LSB)
+    // ---------------------------
+    I2C_setDataCount(I2CB_BASE, 2);
+    I2C_setConfig(I2CB_BASE, I2C_MASTER_RECEIVE_MODE);
+
+    I2C_sendStartCondition(I2CB_BASE);
+    I2C_sendStopCondition(I2CB_BASE);
+
+    while((I2C_getStatus(I2CB_BASE) & I2C_STS_RX_DATA_RDY) == 0) { }
+    msb = I2C_getData(I2CB_BASE);
+
+    while((I2C_getStatus(I2CB_BASE) & I2C_STS_RX_DATA_RDY) == 0) { }
+    lsb = I2C_getData(I2CB_BASE);
+
+    while((I2C_getStatus(I2CB_BASE) & I2C_STS_STOP_CONDITION) == 0) { }
+    I2C_clearStatus(I2CB_BASE, I2C_STS_STOP_CONDITION);
+
+    // NACK olduysa yine hata say
+    if(I2C_getStatus(I2CB_BASE) & I2C_STS_NO_ACK)
+    {
+        I2C_clearStatus(I2CB_BASE, I2C_STS_NO_ACK);
+        sicaklikC = -999.0f;
+        DEVICE_DELAY_US(500000);
+        continue;
+    }
+
+    // ---------------------------
+    // 3) Birleştir + °C'ye çevir
+    // ---------------------------
+    raw_temp = (int16_t)(((uint16_t)msb << 8) | (uint16_t)lsb);
+    sicaklikC = (float)raw_temp * 0.0078125f;
+
+    DEVICE_DELAY_US(500000);   // 500 ms
+}
