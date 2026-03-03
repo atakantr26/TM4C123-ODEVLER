@@ -1,0 +1,25 @@
+#include "driverlib.h"
+#include "device.h"
+
+void main(void)
+{
+    Device_init();
+    Device_initGPIO();
+
+    GPIO_setDirectionMode(40, GPIO_DIR_MODE_OUT);
+    GPIO_setPadConfig(40, GPIO_PIN_TYPE_STD);
+    
+    GPIO_setDirectionMode(41, GPIO_DIR_MODE_OUT);
+    GPIO_setPadConfig(41, GPIO_PIN_TYPE_STD);
+
+    while(1)
+    {
+        GPIO_writePin(40, 1);
+        GPIO_writePin(41, 0);
+        DEVICE_DELAY_US(1000000);
+
+        GPIO_writePin(40, 0);
+        GPIO_writePin(41, 1);
+        DEVICE_DELAY_US(1000000);
+    }
+}
