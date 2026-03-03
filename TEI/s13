@@ -1,0 +1,37 @@
+while(1)
+{
+    uint8_t rx[2];
+    uint16_t device_id = 0;
+
+    // 1) Pointer = 0x0F (Device ID register)
+    I2C_setSlaveAddress(I2C_BASE, TMP117_ADDR);
+    I2C_setDataCount(I2C_BASE, 1);
+    I2C_setConfig(I2C_BASE, I2C_MASTER_SEND_MODE);
+
+    I2C_sendStartCondition(I2C_BASE);
+    I2C_putData(I2C_BASE, 0x0F);
+    I2C_sendStopCondition(I2C_BASE);
+
+    while(!(I2C_getStatus(I2C_BASE) & I2C_STS_STOP_CONDITION));
+    I2C_clearStatus(I2C_BASE, I2C_STS_STOP_CONDITION);
+
+    // 2) 2 byte oku
+    I2C_setDataCount(I2C_BASE, 2);
+    I2C_setConfig(I2C_BASE, I2C_MASTER_RECEIVE_MODE);
+
+    I2C_sendStartCondition(I2C_BASE);
+    I2C_sendStopCondition(I2C_BASE);
+
+    while(!(I2C_getStatus(I2C_BASE) & I2C_STS_RX_DATA_RDY));
+    rx[0] = I2C_getData(I2C_BASE);
+
+    while(!(I2C_getStatus(I2C_BASE) & I2C_STS_RX_DATA_RDY));
+    rx[1] = I2C_getData(I2C_BASE);
+
+    while(!(I2C_getStatus(I2C_BASE) & I2C_STS_STOP_CONDITION));
+    I2C_clearStatus(I2C_BASE, I2C_STS_STOP_CONDITION);
+
+    device_id = (rx[0] << 8) | rx[1];
+
+    DEVICE_DELAY_US(500000);
+}
