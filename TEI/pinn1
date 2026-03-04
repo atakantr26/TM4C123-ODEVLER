@@ -1,0 +1,26 @@
+#include "driverlib.h"
+#include "device.h"
+
+void main(void)
+{
+    Device_init();
+    Device_initGPIO();
+
+    // GPIO40 ve GPIO41'i normal GPIO output yap (I2C pinmux YAPMA)
+    GPIO_setDirectionMode(40, GPIO_DIR_MODE_OUT);
+    GPIO_setPadConfig(40, GPIO_PIN_TYPE_STD);
+    GPIO_writePin(40, 0);
+
+    GPIO_setDirectionMode(41, GPIO_DIR_MODE_OUT);
+    GPIO_setPadConfig(41, GPIO_PIN_TYPE_STD);
+    GPIO_writePin(41, 0);
+
+    while(1)
+    {
+        GPIO_togglePin(40);
+        DEVICE_DELAY_US(200000);
+
+        GPIO_togglePin(41);
+        DEVICE_DELAY_US(200000);
+    }
+}
