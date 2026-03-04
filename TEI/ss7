@@ -1,0 +1,75 @@
+#include "device.h"
+#include "driverlib.h"
+
+// -----------------------------------------------------------------------------
+// GLOBAL DEĞİŞKENLER
+// -----------------------------------------------------------------------------
+uint16_t hamVeri = 0;       // Sensörden gelen 16-bit veri
+float anlikSicaklik = 0.0;  // Gerçek Derece (Celsius)
+uint32_t loopSayaci = 0;
+
+void main(void)
+{
+    // 1. Sistem ve Pin Ayarları
+    Device_init();
+    Device_initGPIO();
+    
+    // I2C Clock'u açıyoruz (Artık bunu öğrendik, çok önemli!)
+    SysCtl_enablePeripheral(SYSCTL_PERIPH_CLK_I2CB);
+
+    // Pin Ayarları
+    GPIO_setPinConfig(GPIO_40_I2CB_SDA);
+    GPIO_setPadConfig(40, GPIO_PIN_TYPE_PULLUP);
+    GPIO_setQualificationMode(40, GPIO_QUAL_ASYNC);
+
+    GPIO_setPinConfig(GPIO_41_I2CB_SCL);
+    GPIO_setPadConfig(41, GPIO_PIN_TYPE_PULLUP);
+    GPIO_setQualificationMode(41, GPIO_QUAL_ASYNC);
+
+    // 2. I2C Başlatma
+    I2C_disableModule(I2CB_BASE);
+    I2C_initMaster(I2CB_BASE, DEVICE_SYSCLK_FREQ, 100000, I2C_DUTYCYCLE_50);
+    I2C_setBitCount(I2CB_BASE, I2C_BITCOUNT_8);
+    I2C_setAddressMode(I2CB_BASE, I2C_ADDR_MODE_7BITS);
+    I2C_enableModule(I2CB_BASE);
+
+    EINT;
+    ERTM;
+
+    while(1)
+    {
+        // --- 2 BYTE OKUMA İŞLEMİ (HASSAS MOD) ---
+
+        // 1. Adresi ayarla ve "Okuyacağım" de
+        I2C_setSlaveAddress(I2CB_BASE, 0x48);
+        I2C_setConfig(I2CB_BASE, I2C_MASTER_RECEIVE_MODE);
+        I2C_setDataCount(I2CB_BASE, 2); // Bu sefer 2 Byte istiyoruz
+        
+        // 2. Başlat
+        I2C_sendStartCondition(I2CB_BASE);
+
+        // 3. İlk Byte'ı bekle ve al (High Byte)
+        while(!(I2C_getStatus(I2CB_BASE) & I2C_STS_REG_ACCESS_RDY));
+        uint16_t highByte = I2C_getData(I2CB_BASE);
+
+        // 4. İkinci Byte'ı bekle ve al (Low Byte)
+        while(!(I2C_getStatus(I2CB_BASE) & I2C_STS_REG_ACCESS_RDY));
+        uint16_t lowByte = I2C_getData(I2CB_BASE);
+        
+        // 5. Durdur
+        I2C_sendStopCondition(I2CB_BASE);
+
+        // --- HESAPLAMA ---
+        
+        // İki parça veriyi birleştir (High << 8 | Low)
+        hamVeri = (highByte << 8) | lowByte;
+
+        // TMP117 Hassas Formülü: Ham Veri * 0.0078125
+        anlikSicaklik = (float)((int16_t)hamVeri) * 0.0078125;
+
+        loopSayaci++;
+        
+        // Okumayı görebilmek için biraz bekle
+        DEVICE_DELAY_US(100000); // 100ms gecikme
+    }
+}
