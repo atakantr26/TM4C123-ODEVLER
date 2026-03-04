@@ -59,7 +59,7 @@ void main(void)
         // 3. FIFO'nun Dolmasını Bekle
         // "RX FIFO'sunda 2 tane veri birikene kadar bekle" diyoruz.
         // getRxFIFOStatus fonksiyonu kovadaki veri sayısını verir.
-        while(I2C_getRxFIFOStatus(I2CB_BASE) < I2C_FIFO_RX2)
+        while(I2C_getRxFIFOStatus(I2CB_BASE) < 2)
         {
             // Bekliyoruz...
             // Eğer burada sonsuz döngüye girerse sensör cevap vermiyordur.
