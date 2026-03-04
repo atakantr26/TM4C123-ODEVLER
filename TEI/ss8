@@ -1,0 +1,82 @@
+#include "device.h"
+#include "driverlib.h"
+
+// -----------------------------------------------------------------------------
+// GLOBAL DEĞİŞKENLER
+// -----------------------------------------------------------------------------
+uint16_t hamVeri = 0;
+float anlikSicaklik = 0.0;
+uint32_t loopSayaci = 0;
+
+void main(void)
+{
+    // Yerel Değişkenler
+    uint16_t ustByte = 0;
+    uint16_t altByte = 0;
+
+    // 1. Sistem ve Pin Ayarları
+    Device_init();
+    Device_initGPIO();
+    SysCtl_enablePeripheral(SYSCTL_PERIPH_CLK_I2CB);
+
+    // GPIO Ayarları
+    GPIO_setPinConfig(GPIO_40_I2CB_SDA);
+    GPIO_setPadConfig(40, GPIO_PIN_TYPE_PULLUP);
+    GPIO_setQualificationMode(40, GPIO_QUAL_ASYNC);
+
+    GPIO_setPinConfig(GPIO_41_I2CB_SCL);
+    GPIO_setPadConfig(41, GPIO_PIN_TYPE_PULLUP);
+    GPIO_setQualificationMode(41, GPIO_QUAL_ASYNC);
+
+    // 2. I2C Başlatma
+    I2C_disableModule(I2CB_BASE);
+    I2C_initMaster(I2CB_BASE, DEVICE_SYSCLK_FREQ, 100000, I2C_DUTYCYCLE_50);
+    I2C_setBitCount(I2CB_BASE, I2C_BITCOUNT_8);
+    I2C_setAddressMode(I2CB_BASE, I2C_ADDR_MODE_7BITS);
+    
+    // *** BURASI YENİ: FIFO'yu (Depoyu) AÇIYORUZ ***
+    I2C_enableFIFO(I2CB_BASE);
+    
+    // Modülü Aktif Et
+    I2C_enableModule(I2CB_BASE);
+
+    EINT;
+    ERTM;
+
+    while(1)
+    {
+        // Önce FIFO temizliği yapalım (Kova boş olsun)
+        I2C_clearData(I2CB_BASE); 
+
+        // 1. Ayarlar
+        I2C_setSlaveAddress(I2CB_BASE, 0x48);
+        I2C_setConfig(I2CB_BASE, I2C_MASTER_RECEIVE_MODE);
+        I2C_setDataCount(I2CB_BASE, 2); // 2 Tane veri istiyoruz
+        
+        // 2. Başlat
+        I2C_sendStartCondition(I2CB_BASE);
+
+        // 3. FIFO'nun Dolmasını Bekle
+        // "Kovada 2 tane veri olana kadar bekle" diyoruz.
+        // getRxFIFOStatus fonksiyonu kovadaki veri sayısını verir.
+        while(I2C_getRxFIFOStatus(I2CB_BASE) < 2)
+        {
+            // Sonsuz döngüye girmesin diye basit bir güvenlik (Optional)
+            // İstersen buraya timeout ekleyebilirsin ama şimdilik gerek yok.
+        }
+
+        // 4. Verileri Kovadan Al
+        ustByte = I2C_getData(I2CB_BASE); // İlk giren ilk çıkar
+        altByte = I2C_getData(I2CB_BASE); // İkinci giren ikinci çıkar
+        
+        // 5. Durdur
+        I2C_sendStopCondition(I2CB_BASE);
+
+        // 6. Hesapla
+        hamVeri = (ustByte << 8) | altByte;
+        anlikSicaklik = (float)((int16_t)hamVeri) * 0.0078125;
+
+        loopSayaci++;
+        DEVICE_DELAY_US(100000); // 100ms
+    }
+}
