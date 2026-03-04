@@ -1,0 +1,179 @@
+#include "driverlib.h"
+#include "device.h"
+
+#define I2C_BASE      I2CB_BASE
+#define TMP117_ADDR   0x48
+#define REG_TEMP      0x00
+
+// Debug/izleme
+volatile uint16_t step   = 0;
+volatile uint16_t ack_ok = 0;
+volatile uint16_t err    = 0;      // 0:OK, 1:NACK, 2:BUSY, 3:STOP_TO, 4:RX_TO
+
+volatile uint16_t sda = 0;          // GPIO40 seviyesi (0/1)
+volatile uint16_t scl = 0;          // GPIO41 seviyesi (0/1)
+
+volatile uint8_t  msb = 0;
+volatile uint8_t  lsb = 0;
+
+volatile uint16_t raw_u16 = 0;
+volatile int16_t  raw_s16 = 0;
+volatile float    tempC   = -999.0f;
+
+static uint16_t waitBusFree(uint32_t base, uint32_t to)
+{
+    while(I2C_isBusBusy(base))
+    {
+        if(to-- == 0U) return 0U;
+    }
+    return 1U;
+}
+
+static uint16_t waitStop(uint32_t base, uint32_t to)
+{
+    while(((I2C_getStatus(base) & I2C_STS_STOP_CONDITION) == 0U))
+    {
+        if(to-- == 0U) return 0U;
+    }
+    I2C_clearStatus(base, I2C_STS_STOP_CONDITION);
+    return 1U;
+}
+
+// 0-byte ping: sadece ACK var mı?
+static uint16_t ping(uint16_t addr)
+{
+    I2C_clearStatus(I2C_BASE, I2C_STS_NO_ACK | I2C_STS_STOP_CONDITION);
+
+    I2C_setSlaveAddress(I2C_BASE, addr);
+    I2C_setDataCount(I2C_BASE, 0);
+    I2C_setConfig(I2C_BASE, I2C_MASTER_SEND_MODE);
+
+    I2C_sendStartCondition(I2C_BASE);
+    I2C_sendStopCondition(I2C_BASE);
+
+    if(!waitStop(I2C_BASE, 2000000UL)) { err = 3; return 0; }
+
+    if(I2C_getStatus(I2C_BASE) & I2C_STS_NO_ACK)
+    {
+        I2C_clearStatus(I2C_BASE, I2C_STS_NO_ACK);
+        err = 1;
+        return 0;
+    }
+
+    err = 0;
+    return 1;
+}
+
+static uint16_t tmp117_readTemp_once(void)
+{
+    uint32_t to;
+
+    // 1) Bus boş mu?
+    step = 1;
+    if(!waitBusFree(I2C_BASE, 2000000UL)) { err = 2; return 0; }
+
+    // 2) Ping ile cihaz var mı?
+    step = 2;
+    ack_ok = ping(TMP117_ADDR);
+    if(!ack_ok) return 0;
+
+    // 3) Register pointer yaz: 0x00
+    step = 3;
+    I2C_clearStatus(I2C_BASE, I2C_STS_NO_ACK | I2C_STS_STOP_CONDITION);
+
+    I2C_setSlaveAddress(I2C_BASE, TMP117_ADDR);
+    I2C_setDataCount(I2C_BASE, 1);
+    I2C_setConfig(I2C_BASE, I2C_MASTER_SEND_MODE);
+
+    I2C_putData(I2C_BASE, REG_TEMP);
+    I2C_sendStartCondition(I2C_BASE);
+    I2C_sendStopCondition(I2C_BASE);
+
+    if(!waitStop(I2C_BASE, 2000000UL)) { err = 3; return 0; }
+
+    if(I2C_getStatus(I2C_BASE) & I2C_STS_NO_ACK)
+    {
+        I2C_clearStatus(I2C_BASE, I2C_STS_NO_ACK);
+        err = 1;
+        return 0;
+    }
+
+    // 4) 2 byte oku
+    step = 4;
+    if(!waitBusFree(I2C_BASE, 2000000UL)) { err = 2; return 0; }
+
+    I2C_clearStatus(I2C_BASE, I2C_STS_NO_ACK | I2C_STS_STOP_CONDITION);
+
+    I2C_setSlaveAddress(I2C_BASE, TMP117_ADDR);
+    I2C_setDataCount(I2C_BASE, 2);
+    I2C_setConfig(I2C_BASE, I2C_MASTER_RECEIVE_MODE);
+
+    I2C_sendStartCondition(I2C_BASE);
+
+    // RX byte1
+    to = 2000000UL;
+    while(((I2C_getStatus(I2C_BASE) & I2C_STS_RX_DATA_RDY) == 0U))
+    {
+        if(to-- == 0U) { err = 4; I2C_sendStopCondition(I2C_BASE); return 0; }
+    }
+    msb = (uint8_t)I2C_getData(I2C_BASE);
+
+    // RX byte2
+    to = 2000000UL;
+    while(((I2C_getStatus(I2C_BASE) & I2C_STS_RX_DATA_RDY) == 0U))
+    {
+        if(to-- == 0U) { err = 4; I2C_sendStopCondition(I2C_BASE); return 0; }
+    }
+    lsb = (uint8_t)I2C_getData(I2C_BASE);
+
+    I2C_sendStopCondition(I2C_BASE);
+
+    if(!waitStop(I2C_BASE, 2000000UL)) { err = 3; return 0; }
+
+    if(I2C_getStatus(I2C_BASE) & I2C_STS_NO_ACK)
+    {
+        I2C_clearStatus(I2C_BASE, I2C_STS_NO_ACK);
+        err = 1;
+        return 0;
+    }
+
+    // 5) Birleştir ve °C
+    step = 5;
+    raw_u16 = (uint16_t)(((uint16_t)msb << 8) | (uint16_t)lsb);
+    raw_s16 = (int16_t)raw_u16;
+    tempC   = (float)raw_s16 * 0.0078125f;
+
+    err = 0;
+    return 1;
+}
+
+void main(void)
+{
+    Device_init();
+    Device_initGPIO();
+
+    // I2C-B pinmux: GPIO40 SDA, GPIO41 SCL
+    GPIO_setPinConfig(GPIO_40_I2CB_SDA);
+    GPIO_setPadConfig(40, GPIO_PIN_TYPE_OD | GPIO_PIN_TYPE_PULLUP);
+    GPIO_setQualificationMode(40, GPIO_QUAL_ASYNC);
+
+    GPIO_setPinConfig(GPIO_41_I2CB_SCL);
+    GPIO_setPadConfig(41, GPIO_PIN_TYPE_OD | GPIO_PIN_TYPE_PULLUP);
+    GPIO_setQualificationMode(41, GPIO_QUAL_ASYNC);
+
+    // I2C init (100 kHz)
+    I2C_disableModule(I2C_BASE);
+    I2C_initMaster(I2C_BASE, DEVICE_SYSCLK_FREQ, 100000, I2C_DUTYCYCLE_50);
+    I2C_setBitCount(I2C_BASE, I2C_BITCOUNT_8);
+    I2C_enableModule(I2C_BASE);
+
+    while(1)
+    {
+        // Hat seviyelerini izle (I2C çalışırken bile okunur)
+        sda = (uint16_t)GPIO_readPin(40);
+        scl = (uint16_t)GPIO_readPin(41);
+
+        tmp117_readTemp_once();
+        DEVICE_DELAY_US(200000);
+    }
+}
