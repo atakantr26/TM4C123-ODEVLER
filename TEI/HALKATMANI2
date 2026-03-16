@@ -1,0 +1,98 @@
+#ifndef TEI_I2C_HAL_H
+#define TEI_I2C_HAL_H
+
+#include <stdint.h>
+
+void TEI_I2C_init(void);
+
+void TEI_I2C_setSlaveAddress(uint16_t slaveAddr);
+
+void TEI_I2C_setSendMode(void);
+void TEI_I2C_setReceiveMode(void);
+
+void TEI_I2C_setDataCount(uint16_t count);
+
+void TEI_I2C_putData(uint16_t data);
+uint16_t TEI_I2C_getData(void);
+
+void TEI_I2C_sendStart(void);
+void TEI_I2C_sendStop(void);
+
+uint16_t TEI_I2C_getStopStatus(void);
+uint16_t TEI_I2C_getRxFIFOStatus(void);
+
+#endif
+
+
+#####################################
+
+
+#include "tei_i2c_hal.h"
+#include "tei_i2c_driver.h"
+#include "device.h"
+#include "driverlib.h"
+
+void TEI_I2C_init(void)
+{
+    // GPIO ayarları HAL seviyesinde kalabilir
+    GPIO_setPinConfig(GPIO_40_I2CB_SDA);
+    GPIO_setPadConfig(40, GPIO_PIN_TYPE_PULLUP);
+    GPIO_setQualificationMode(40, GPIO_QUAL_ASYNC);
+
+    GPIO_setPinConfig(GPIO_41_I2CB_SCL);
+    GPIO_setPadConfig(41, GPIO_PIN_TYPE_PULLUP);
+    GPIO_setQualificationMode(41, GPIO_QUAL_ASYNC);
+
+    // Donanım sürücüsünü başlat
+    TEI_I2C_DRIVER_init();
+}
+
+void TEI_I2C_setSlaveAddress(uint16_t slaveAddr)
+{
+    TEI_I2C_DRIVER_setSlaveAddress(slaveAddr);
+}
+
+void TEI_I2C_setSendMode(void)
+{
+    TEI_I2C_DRIVER_setSendMode();
+}
+
+void TEI_I2C_setReceiveMode(void)
+{
+    TEI_I2C_DRIVER_setReceiveMode();
+}
+
+void TEI_I2C_setDataCount(uint16_t count)
+{
+    TEI_I2C_DRIVER_setDataCount(count);
+}
+
+void TEI_I2C_putData(uint16_t data)
+{
+    TEI_I2C_DRIVER_putData(data);
+}
+
+uint16_t TEI_I2C_getData(void)
+{
+    return TEI_I2C_DRIVER_getData();
+}
+
+void TEI_I2C_sendStart(void)
+{
+    TEI_I2C_DRIVER_sendStart();
+}
+
+void TEI_I2C_sendStop(void)
+{
+    TEI_I2C_DRIVER_sendStop();
+}
+
+uint16_t TEI_I2C_getStopStatus(void)
+{
+    return TEI_I2C_DRIVER_getStopStatus();
+}
+
+uint16_t TEI_I2C_getRxFIFOStatus(void)
+{
+    return TEI_I2C_DRIVER_getRxFIFOStatus();
+}
