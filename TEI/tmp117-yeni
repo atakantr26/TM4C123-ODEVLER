@@ -1,0 +1,57 @@
+#include "tmp117.h"
+#include "tei_i2c_hal.h"
+
+#define TMP117_ADDR 0x48
+#define TMP117_TEMP_REGISTER 0x00
+
+
+uint16_t TMP117_readRaw(void)
+{
+    uint16_t highByte;
+    uint16_t lowByte;
+    uint16_t raw;
+
+    // Sensör adresini ayarla
+    TEI_I2C_setSlaveAddress(TMP117_ADDR);
+
+    // Register adresi göndermek için SEND mode
+    TEI_I2C_setSendMode();
+    TEI_I2C_setDataCount(1);
+
+    TEI_I2C_putData(TMP117_TEMP_REGISTER);
+
+    TEI_I2C_sendStart();
+    TEI_I2C_sendStop();
+
+    while(TEI_I2C_getStopStatus());
+
+    // Şimdi veri okumaya geç
+    TEI_I2C_setReceiveMode();
+    TEI_I2C_setDataCount(2);
+
+    TEI_I2C_sendStart();
+    TEI_I2C_sendStop();
+
+    // FIFO'da veri gelene kadar bekle
+    while(TEI_I2C_getRxFIFOStatus() < 2);
+
+    highByte = TEI_I2C_getData();
+    lowByte  = TEI_I2C_getData();
+
+    raw = (highByte << 8) | lowByte;
+
+    return raw;
+}
+
+
+float TMP117_readTempC(void)
+{
+    int16_t raw;
+    float temp;
+
+    raw = (int16_t)TMP117_readRaw();
+
+    temp = raw * 0.0078125;
+
+    return temp;
+}
