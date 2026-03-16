@@ -1,0 +1,149 @@
+#ifndef TEI_I2C_DRIVER_H
+#define TEI_I2C_DRIVER_H
+
+#include <stdint.h>
+
+void TEI_I2C_DRIVER_init(void);
+
+void TEI_I2C_DRIVER_setSlaveAddress(uint16_t slaveAddr);
+
+void TEI_I2C_DRIVER_setSendMode(void);
+void TEI_I2C_DRIVER_setReceiveMode(void);
+
+void TEI_I2C_DRIVER_setDataCount(uint16_t count);
+
+void TEI_I2C_DRIVER_putData(uint16_t data);
+uint16_t TEI_I2C_DRIVER_getData(void);
+
+void TEI_I2C_DRIVER_sendStart(void);
+void TEI_I2C_DRIVER_sendStop(void);
+
+uint16_t TEI_I2C_DRIVER_getStopStatus(void);
+uint16_t TEI_I2C_DRIVER_getRxFIFOStatus(void);
+
+#endif
+
+
+
+#include "tei_i2c_driver.h"
+#include "device.h"
+#include "hw_memmap.h"
+#include "hw_i2c.h"
+#include "hw_types.h"
+
+#define TEI_I2C_BASE I2CB_BASE
+
+
+void TEI_I2C_DRIVER_init(void)
+{
+    uint16_t reg;
+
+    // I2C modülü kapat
+    HWREGH(TEI_I2C_BASE + I2C_O_MDR) &= ~I2C_MDR_IRS;
+
+    // Clock prescaler
+    HWREGH(TEI_I2C_BASE + I2C_O_PSC) = 9;
+
+    // SCL low süresi
+    HWREGH(TEI_I2C_BASE + I2C_O_CLKL) = 45;
+
+    // SCL high süresi
+    HWREGH(TEI_I2C_BASE + I2C_O_CLKH) = 45;
+
+    // Bit count = 8 bit
+    reg = HWREGH(TEI_I2C_BASE + I2C_O_MDR);
+    reg &= ~I2C_MDR_BC_M;
+    reg |= I2C_MDR_BC_8;
+    HWREGH(TEI_I2C_BASE + I2C_O_MDR) = reg;
+
+    // FIFO enable
+    HWREGH(TEI_I2C_BASE + I2C_O_FFTX) |= I2C_FFTX_TXFFEN;
+    HWREGH(TEI_I2C_BASE + I2C_O_FFRX) |= I2C_FFRX_RXFFEN;
+
+    // I2C modülünü aç
+    HWREGH(TEI_I2C_BASE + I2C_O_MDR) |= I2C_MDR_IRS;
+}
+
+
+
+void TEI_I2C_DRIVER_setSlaveAddress(uint16_t slaveAddr)
+{
+    HWREGH(TEI_I2C_BASE + I2C_O_SAR) = slaveAddr;
+}
+
+
+
+void TEI_I2C_DRIVER_setSendMode(void)
+{
+    uint16_t reg;
+
+    reg = HWREGH(TEI_I2C_BASE + I2C_O_MDR);
+
+    reg |= I2C_MDR_MST;
+    reg |= I2C_MDR_TRX;
+
+    HWREGH(TEI_I2C_BASE + I2C_O_MDR) = reg;
+}
+
+
+
+void TEI_I2C_DRIVER_setReceiveMode(void)
+{
+    uint16_t reg;
+
+    reg = HWREGH(TEI_I2C_BASE + I2C_O_MDR);
+
+    reg |= I2C_MDR_MST;
+    reg &= ~I2C_MDR_TRX;
+
+    HWREGH(TEI_I2C_BASE + I2C_O_MDR) = reg;
+}
+
+
+
+void TEI_I2C_DRIVER_setDataCount(uint16_t count)
+{
+    HWREGH(TEI_I2C_BASE + I2C_O_CNT) = count;
+}
+
+
+
+void TEI_I2C_DRIVER_putData(uint16_t data)
+{
+    HWREGH(TEI_I2C_BASE + I2C_O_DXR) = data;
+}
+
+
+
+uint16_t TEI_I2C_DRIVER_getData(void)
+{
+    return HWREGH(TEI_I2C_BASE + I2C_O_DRR);
+}
+
+
+
+void TEI_I2C_DRIVER_sendStart(void)
+{
+    HWREGH(TEI_I2C_BASE + I2C_O_MDR) |= I2C_MDR_STT;
+}
+
+
+
+void TEI_I2C_DRIVER_sendStop(void)
+{
+    HWREGH(TEI_I2C_BASE + I2C_O_MDR) |= I2C_MDR_STP;
+}
+
+
+
+uint16_t TEI_I2C_DRIVER_getStopStatus(void)
+{
+    return (HWREGH(TEI_I2C_BASE + I2C_O_MDR) & I2C_MDR_STP);
+}
+
+
+
+uint16_t TEI_I2C_DRIVER_getRxFIFOStatus(void)
+{
+    return ((HWREGH(TEI_I2C_BASE + I2C_O_FFRX) & I2C_FFRX_RXFFST_M) >> I2C_FFRX_RXFFST_S);
+}
