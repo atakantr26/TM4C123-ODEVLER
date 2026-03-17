@@ -1,0 +1,332 @@
+#ifndef DS1302_H
+#define DS1302_H
+
+#include <stdint.h>
+
+typedef struct
+{
+    uint8_t seconds;
+    uint8_t minutes;
+    uint8_t hours;
+    uint8_t date;
+    uint8_t month;
+    uint8_t day;
+    uint8_t year;
+} DS1302_Time;
+
+void DS1302_init(void);
+void DS1302_disableWriteProtect(void);
+void DS1302_enableWriteProtect(void);
+void DS1302_setTime(const DS1302_Time *time);
+void DS1302_getTime(DS1302_Time *time);
+
+uint8_t DS1302_readRegister(uint8_t cmdRead);
+void DS1302_writeRegister(uint8_t cmdWrite, uint8_t data);
+
+#endif
+
+
+##################################
+
+#include "device.h"
+#include "driverlib.h"
+#include "ds1302.h"
+
+/* =========================
+   GPIO SEÇİMLERİ
+   KENDİ KARTINA GÖRE DEĞİŞTİR
+   ========================= */
+#define DS1302_RST_PIN   10U
+#define DS1302_CLK_PIN   11U
+#define DS1302_IO_PIN    12U
+
+/* =========================
+   DS1302 COMMAND BYTE'LARI
+   ========================= */
+#define DS1302_CMD_SECONDS_W   0x80U
+#define DS1302_CMD_SECONDS_R   0x81U
+#define DS1302_CMD_MINUTES_W   0x82U
+#define DS1302_CMD_MINUTES_R   0x83U
+#define DS1302_CMD_HOURS_W     0x84U
+#define DS1302_CMD_HOURS_R     0x85U
+#define DS1302_CMD_DATE_W      0x86U
+#define DS1302_CMD_DATE_R      0x87U
+#define DS1302_CMD_MONTH_W     0x88U
+#define DS1302_CMD_MONTH_R     0x89U
+#define DS1302_CMD_DAY_W       0x8AU
+#define DS1302_CMD_DAY_R       0x8BU
+#define DS1302_CMD_YEAR_W      0x8CU
+#define DS1302_CMD_YEAR_R      0x8DU
+#define DS1302_CMD_WP_W        0x8EU
+#define DS1302_CMD_WP_R        0x8FU
+
+/* =========================
+   YARDIMCI FONKSİYONLAR
+   ========================= */
+static void DS1302_delay(void)
+{
+    DEVICE_DELAY_US(2);
+}
+
+static void DS1302_ioOutput(void)
+{
+    GPIO_setDirectionMode(DS1302_IO_PIN, GPIO_DIR_MODE_OUT);
+}
+
+static void DS1302_ioInput(void)
+{
+    GPIO_setDirectionMode(DS1302_IO_PIN, GPIO_DIR_MODE_IN);
+}
+
+static void DS1302_rstHigh(void)
+{
+    GPIO_writePin(DS1302_RST_PIN, 1);
+}
+
+static void DS1302_rstLow(void)
+{
+    GPIO_writePin(DS1302_RST_PIN, 0);
+}
+
+static void DS1302_clkHigh(void)
+{
+    GPIO_writePin(DS1302_CLK_PIN, 1);
+}
+
+static void DS1302_clkLow(void)
+{
+    GPIO_writePin(DS1302_CLK_PIN, 0);
+}
+
+static void DS1302_ioWrite(uint16_t val)
+{
+    GPIO_writePin(DS1302_IO_PIN, val);
+}
+
+static uint16_t DS1302_ioRead(void)
+{
+    return GPIO_readPin(DS1302_IO_PIN);
+}
+
+static uint8_t decToBcd(uint8_t dec)
+{
+    return (uint8_t)(((dec / 10U) << 4U) | (dec % 10U));
+}
+
+static uint8_t bcdToDec(uint8_t bcd)
+{
+    return (uint8_t)(((bcd >> 4U) * 10U) + (bcd & 0x0FU));
+}
+
+/* LSB first byte gönder */
+static void DS1302_writeByte(uint8_t data)
+{
+    uint16_t i;
+
+    DS1302_ioOutput();
+
+    for(i = 0; i < 8U; i++)
+    {
+        DS1302_ioWrite(data & 0x01U);
+        DS1302_delay();
+
+        DS1302_clkHigh();
+        DS1302_delay();
+
+        DS1302_clkLow();
+        DS1302_delay();
+
+        data >>= 1U;
+    }
+}
+
+/* LSB first byte oku */
+static uint8_t DS1302_readByte(void)
+{
+    uint16_t i;
+    uint8_t data = 0U;
+
+    DS1302_ioInput();
+
+    for(i = 0; i < 8U; i++)
+    {
+        if(DS1302_ioRead())
+        {
+            data |= (uint8_t)(1U << i);
+        }
+
+        DS1302_delay();
+        DS1302_clkHigh();
+        DS1302_delay();
+        DS1302_clkLow();
+        DS1302_delay();
+    }
+
+    return data;
+}
+
+/* =========================
+   ANA DS1302 FONKSİYONLARI
+   ========================= */
+void DS1302_init(void)
+{
+    /* RST ve CLK output */
+    GPIO_setDirectionMode(DS1302_RST_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_setDirectionMode(DS1302_CLK_PIN, GPIO_DIR_MODE_OUT);
+
+    /* IO başlangıçta output */
+    GPIO_setDirectionMode(DS1302_IO_PIN, GPIO_DIR_MODE_OUT);
+
+    GPIO_setPadConfig(DS1302_RST_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setPadConfig(DS1302_CLK_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setPadConfig(DS1302_IO_PIN, GPIO_PIN_TYPE_STD);
+
+    GPIO_setQualificationMode(DS1302_RST_PIN, GPIO_QUAL_ASYNC);
+    GPIO_setQualificationMode(DS1302_CLK_PIN, GPIO_QUAL_ASYNC);
+    GPIO_setQualificationMode(DS1302_IO_PIN, GPIO_QUAL_ASYNC);
+
+    DS1302_rstLow();
+    DS1302_clkLow();
+    DS1302_ioWrite(0U);
+
+    /* Yazma korumasını kapat */
+    DS1302_disableWriteProtect();
+
+    /* Clock Halt bitini temizle: seconds register bit7 = CH */
+    {
+        uint8_t sec = DS1302_readRegister(DS1302_CMD_SECONDS_R);
+        sec &= 0x7FU;
+        DS1302_writeRegister(DS1302_CMD_SECONDS_W, sec);
+    }
+}
+
+void DS1302_writeRegister(uint8_t cmdWrite, uint8_t data)
+{
+    DS1302_rstLow();
+    DS1302_clkLow();
+    DS1302_delay();
+
+    DS1302_rstHigh();
+    DS1302_delay();
+
+    DS1302_writeByte(cmdWrite);
+    DS1302_writeByte(data);
+
+    DS1302_rstLow();
+    DS1302_delay();
+}
+
+uint8_t DS1302_readRegister(uint8_t cmdRead)
+{
+    uint8_t data;
+
+    DS1302_rstLow();
+    DS1302_clkLow();
+    DS1302_delay();
+
+    DS1302_rstHigh();
+    DS1302_delay();
+
+    DS1302_writeByte(cmdRead);
+    data = DS1302_readByte();
+
+    DS1302_rstLow();
+    DS1302_delay();
+
+    return data;
+}
+
+void DS1302_disableWriteProtect(void)
+{
+    DS1302_writeRegister(DS1302_CMD_WP_W, 0x00U);
+}
+
+void DS1302_enableWriteProtect(void)
+{
+    DS1302_writeRegister(DS1302_CMD_WP_W, 0x80U);
+}
+
+void DS1302_setTime(const DS1302_Time *time)
+{
+    uint8_t sec;
+
+    DS1302_disableWriteProtect();
+
+    /* CH bit = 0 olmalı */
+    sec = decToBcd(time->seconds) & 0x7FU;
+
+    DS1302_writeRegister(DS1302_CMD_SECONDS_W, sec);
+    DS1302_writeRegister(DS1302_CMD_MINUTES_W, decToBcd(time->minutes));
+    DS1302_writeRegister(DS1302_CMD_HOURS_W,   decToBcd(time->hours));   /* 24 saat modu varsayımı */
+    DS1302_writeRegister(DS1302_CMD_DATE_W,    decToBcd(time->date));
+    DS1302_writeRegister(DS1302_CMD_MONTH_W,   decToBcd(time->month));
+    DS1302_writeRegister(DS1302_CMD_DAY_W,     decToBcd(time->day));
+    DS1302_writeRegister(DS1302_CMD_YEAR_W,    decToBcd(time->year));
+
+    DS1302_enableWriteProtect();
+}
+
+void DS1302_getTime(DS1302_Time *time)
+{
+    uint8_t sec;
+    uint8_t min;
+    uint8_t hour;
+    uint8_t date;
+    uint8_t month;
+    uint8_t day;
+    uint8_t year;
+
+    sec   = DS1302_readRegister(DS1302_CMD_SECONDS_R) & 0x7FU;
+    min   = DS1302_readRegister(DS1302_CMD_MINUTES_R) & 0x7FU;
+    hour  = DS1302_readRegister(DS1302_CMD_HOURS_R)   & 0x3FU; /* 24 saat varsayımı */
+    date  = DS1302_readRegister(DS1302_CMD_DATE_R)    & 0x3FU;
+    month = DS1302_readRegister(DS1302_CMD_MONTH_R)   & 0x1FU;
+    day   = DS1302_readRegister(DS1302_CMD_DAY_R)     & 0x07U;
+    year  = DS1302_readRegister(DS1302_CMD_YEAR_R);
+
+    time->seconds = bcdToDec(sec);
+    time->minutes = bcdToDec(min);
+    time->hours   = bcdToDec(hour);
+    time->date    = bcdToDec(date);
+    time->month   = bcdToDec(month);
+    time->day     = bcdToDec(day);
+    time->year    = bcdToDec(year);
+}
+
+####################################
+
+#include "device.h"
+#include "driverlib.h"
+#include "ds1302.h"
+
+DS1302_Time rtcTime;
+uint32_t loopSayaci = 0;
+
+void main(void)
+{
+    Device_init();
+    Device_initGPIO();
+
+    DS1302_init();
+
+    /* İlk kurulumda bir kere açıp zamanı set edebilirsin */
+    /*
+    DS1302_Time ayar;
+    ayar.seconds = 0;
+    ayar.minutes = 30;
+    ayar.hours   = 14;
+    ayar.date    = 17;
+    ayar.month   = 3;
+    ayar.day     = 1;   // 1-7
+    ayar.year    = 26;  // 2026 -> 26
+    DS1302_setTime(&ayar);
+    */
+
+    while(1)
+    {
+        DS1302_getTime(&rtcTime);
+        loopSayaci++;
+
+        DEVICE_DELAY_US(500000); /* 500 ms */
+    }
+}
