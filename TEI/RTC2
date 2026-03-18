@@ -1,0 +1,224 @@
+#include "device.h"
+#include "driverlib.h"
+#include <stdint.h>
+
+/* =========================
+   DS1302 PINLERİ
+   ========================= */
+#define DS1302_RST_PIN   35U
+#define DS1302_CLK_PIN   37U
+#define DS1302_IO_PIN    36U
+
+/* =========================
+   DS1302 COMMAND
+   ========================= */
+#define DS1302_CMD_SECONDS_R   0x81U
+#define DS1302_CMD_SECONDS_W   0x80U
+#define DS1302_CMD_WP_W        0x8EU
+
+/* =========================
+   GLOBAL DEĞİŞKENLER
+   WATCH'TAN İZLE
+   ========================= */
+uint8_t sec_raw = 0;
+uint8_t sec_dec = 0;
+uint32_t loopSayaci = 0;
+
+/* =========================
+   YARDIMCI FONKSİYONLAR
+   ========================= */
+static void DS1302_delay(void)
+{
+    DEVICE_DELAY_US(2);
+}
+
+static void DS1302_rstHigh(void)
+{
+    GPIO_writePin(DS1302_RST_PIN, 1);
+}
+
+static void DS1302_rstLow(void)
+{
+    GPIO_writePin(DS1302_RST_PIN, 0);
+}
+
+static void DS1302_clkHigh(void)
+{
+    GPIO_writePin(DS1302_CLK_PIN, 1);
+}
+
+static void DS1302_clkLow(void)
+{
+    GPIO_writePin(DS1302_CLK_PIN, 0);
+}
+
+static void DS1302_ioOutput(void)
+{
+    GPIO_setDirectionMode(DS1302_IO_PIN, GPIO_DIR_MODE_OUT);
+}
+
+static void DS1302_ioInput(void)
+{
+    GPIO_setDirectionMode(DS1302_IO_PIN, GPIO_DIR_MODE_IN);
+}
+
+static void DS1302_ioWrite(uint16_t value)
+{
+    GPIO_writePin(DS1302_IO_PIN, value);
+}
+
+static uint16_t DS1302_ioRead(void)
+{
+    return GPIO_readPin(DS1302_IO_PIN);
+}
+
+static uint8_t bcdToDec(uint8_t bcd)
+{
+    return (uint8_t)(((bcd >> 4U) * 10U) + (bcd & 0x0FU));
+}
+
+/* =========================
+   BYTE YAZ / BYTE OKU
+   LSB FIRST
+   ========================= */
+static void DS1302_writeByte(uint8_t data)
+{
+    uint16_t i;
+
+    DS1302_ioOutput();
+
+    for(i = 0; i < 8U; i++)
+    {
+        DS1302_ioWrite(data & 0x01U);
+        DS1302_delay();
+
+        DS1302_clkHigh();
+        DS1302_delay();
+
+        DS1302_clkLow();
+        DS1302_delay();
+
+        data >>= 1U;
+    }
+}
+
+static uint8_t DS1302_readByte(void)
+{
+    uint16_t i;
+    uint8_t data = 0U;
+
+    DS1302_ioInput();
+
+    for(i = 0; i < 8U; i++)
+    {
+        if(DS1302_ioRead())
+        {
+            data |= (uint8_t)(1U << i);
+        }
+
+        DS1302_delay();
+        DS1302_clkHigh();
+        DS1302_delay();
+        DS1302_clkLow();
+        DS1302_delay();
+    }
+
+    return data;
+}
+
+/* =========================
+   REGISTER YAZ / OKU
+   ========================= */
+static void DS1302_writeRegister(uint8_t cmdWrite, uint8_t data)
+{
+    DS1302_rstLow();
+    DS1302_clkLow();
+    DS1302_delay();
+
+    DS1302_rstHigh();
+    DS1302_delay();
+
+    DS1302_writeByte(cmdWrite);
+    DS1302_writeByte(data);
+
+    DS1302_rstLow();
+    DS1302_delay();
+}
+
+static uint8_t DS1302_readRegister(uint8_t cmdRead)
+{
+    uint8_t data;
+
+    DS1302_rstLow();
+    DS1302_clkLow();
+    DS1302_delay();
+
+    DS1302_rstHigh();
+    DS1302_delay();
+
+    DS1302_writeByte(cmdRead);
+    data = DS1302_readByte();
+
+    DS1302_rstLow();
+    DS1302_delay();
+
+    return data;
+}
+
+/* =========================
+   DS1302 INIT
+   ========================= */
+static void DS1302_initSimple(void)
+{
+    /* GPIO yönleri */
+    GPIO_setDirectionMode(DS1302_RST_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_setDirectionMode(DS1302_CLK_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_setDirectionMode(DS1302_IO_PIN,  GPIO_DIR_MODE_OUT);
+
+    /* Pad config */
+    GPIO_setPadConfig(DS1302_RST_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setPadConfig(DS1302_CLK_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setPadConfig(DS1302_IO_PIN,  GPIO_PIN_TYPE_STD);
+
+    /* Qualification */
+    GPIO_setQualificationMode(DS1302_RST_PIN, GPIO_QUAL_ASYNC);
+    GPIO_setQualificationMode(DS1302_CLK_PIN, GPIO_QUAL_ASYNC);
+    GPIO_setQualificationMode(DS1302_IO_PIN,  GPIO_QUAL_ASYNC);
+
+    /* Başlangıç seviyeleri */
+    DS1302_rstLow();
+    DS1302_clkLow();
+    DS1302_ioWrite(0);
+
+    /* Write protect kapat */
+    DS1302_writeRegister(DS1302_CMD_WP_W, 0x00U);
+
+    /* Clock Halt bitini temizle (seconds register bit7) */
+    sec_raw = DS1302_readRegister(DS1302_CMD_SECONDS_R);
+    sec_raw &= 0x7FU;
+    DS1302_writeRegister(DS1302_CMD_SECONDS_W, sec_raw);
+}
+
+/* =========================
+   MAIN
+   ========================= */
+void main(void)
+{
+    Device_init();
+    Device_initGPIO();
+
+    DS1302_initSimple();
+
+    while(1)
+    {
+        /* Ham saniye verisini oku */
+        sec_raw = DS1302_readRegister(DS1302_CMD_SECONDS_R);
+
+        /* CH bitini temizle, sadece saniye kısmını al */
+        sec_dec = bcdToDec(sec_raw & 0x7FU);
+
+        loopSayaci++;
+
+        DEVICE_DELAY_US(500000);   /* 500 ms */
+    }
+}
