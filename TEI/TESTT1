@@ -69,3 +69,38 @@ void main(void)
         DEVICE_DELAY_US(500000);
     }
 }
+
+
+
+
+
+#include "device.h"
+#include "driverlib.h"
+
+#define DS1302_CLK_PIN   37U
+
+uint32_t loopSayaci = 0;
+
+void main(void)
+{
+    Device_init();
+    Device_initGPIO();
+
+    GPIO_setDirectionMode(DS1302_CLK_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_setPadConfig(DS1302_CLK_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setQualificationMode(DS1302_CLK_PIN, GPIO_QUAL_ASYNC);
+
+    GPIO_writePin(DS1302_CLK_PIN, 0);
+
+    while(1)
+    {
+        GPIO_writePin(DS1302_CLK_PIN, 1);
+        DEVICE_DELAY_US(500000);   // 0.5 saniye HIGH
+
+        GPIO_writePin(DS1302_CLK_PIN, 0);
+        DEVICE_DELAY_US(500000);   // 0.5 saniye LOW
+
+        loopSayaci++;
+    }
+}
+
