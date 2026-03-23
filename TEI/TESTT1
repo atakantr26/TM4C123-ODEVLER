@@ -1,0 +1,71 @@
+#include "device.h"
+#include "driverlib.h"
+
+/* PINLER */
+#define RST 36
+#define DAT 35
+#define CLK 37
+
+void main(void)
+{
+    Device_init();
+    Device_initGPIO();
+
+    /* PIN yönleri */
+    GPIO_setDirectionMode(RST, GPIO_DIR_MODE_OUT);
+    GPIO_setDirectionMode(CLK, GPIO_DIR_MODE_OUT);
+    GPIO_setDirectionMode(DAT, GPIO_DIR_MODE_OUT);
+
+    GPIO_setPadConfig(RST, GPIO_PIN_TYPE_STD);
+    GPIO_setPadConfig(CLK, GPIO_PIN_TYPE_STD);
+    GPIO_setPadConfig(DAT, GPIO_PIN_TYPE_STD);
+
+    GPIO_setQualificationMode(RST, GPIO_QUAL_ASYNC);
+    GPIO_setQualificationMode(CLK, GPIO_QUAL_ASYNC);
+    GPIO_setQualificationMode(DAT, GPIO_QUAL_ASYNC);
+
+    while(1)
+    {
+        /* -------------------------
+           TEST 1: RST
+           ------------------------- */
+        GPIO_writePin(RST, 1);
+        DEVICE_DELAY_US(500000);  // 0.5 sn
+
+        GPIO_writePin(RST, 0);
+        DEVICE_DELAY_US(500000);
+
+        /* -------------------------
+           TEST 2: CLK (hızlı toggle)
+           ------------------------- */
+        int i;
+        for(i=0; i<20; i++)
+        {
+            GPIO_writePin(CLK, 1);
+            DEVICE_DELAY_US(10000);
+
+            GPIO_writePin(CLK, 0);
+            DEVICE_DELAY_US(10000);
+        }
+
+        /* -------------------------
+           TEST 3: DAT OUTPUT
+           ------------------------- */
+        GPIO_setDirectionMode(DAT, GPIO_DIR_MODE_OUT);
+
+        GPIO_writePin(DAT, 1);
+        DEVICE_DELAY_US(500000);
+
+        GPIO_writePin(DAT, 0);
+        DEVICE_DELAY_US(500000);
+
+        /* -------------------------
+           TEST 4: DAT INPUT OKUMA
+           ------------------------- */
+        GPIO_setDirectionMode(DAT, GPIO_DIR_MODE_IN);
+
+        volatile uint16_t dat_okuma = GPIO_readPin(DAT);
+
+        DEVICE_DELAY_US(500000);
+    }
+}
