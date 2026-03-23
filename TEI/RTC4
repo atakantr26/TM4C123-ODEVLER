@@ -238,3 +238,112 @@ void main(void)
         DEVICE_DELAY_US(500000);
     }
 }
+
+
+
+
+
+
+
+
+#include "driverlib.h"
+#include "device.h"
+
+// --- PİN AYARLARI ---
+#define RST_PIN 36  // CE Pini
+#define DAT_PIN 35  // I/O Pini
+#define CLK_PIN 37  // SCLK Pini
+
+// --- DEĞİŞKENLER ---
+uint16_t saniye_bcd = 0;
+uint16_t saniye_dec = 0;
+
+// --- ALT FONKSİYONLAR ---
+void DS1302_WriteByte(uint16_t data) {
+    for(int i = 0; i < 8; i++) {
+        GPIO_writePin(DAT_PIN, (data & 0x01)); // LSB ilk gönderilir
+        data >>= 1;
+        GPIO_writePin(CLK_PIN, 1);
+        DEVICE_DELAY_US(2);
+        GPIO_writePin(CLK_PIN, 0);
+        DEVICE_DELAY_US(2);
+    }
+}
+
+uint16_t DS1302_ReadByte(void) {
+    uint16_t data = 0;
+    for(int i = 0; i < 8; i++) {
+        if(GPIO_readPin(DAT_PIN)) data |= (1 << i); // LSB ilk okunur
+        GPIO_writePin(CLK_PIN, 1);
+        DEVICE_DELAY_US(2);
+        GPIO_writePin(CLK_PIN, 0);
+        DEVICE_DELAY_US(2);
+    }
+    return data;
+}
+
+void DS1302_Yaz(uint16_t cmd, uint16_t data) {
+    GPIO_writePin(RST_PIN, 1);
+    DEVICE_DELAY_US(2);
+    
+    DS1302_WriteByte(cmd);
+    DS1302_WriteByte(data);
+    
+    GPIO_writePin(RST_PIN, 0);
+}
+
+uint16_t DS1302_Oku(uint16_t cmd) {
+    uint16_t veri;
+    GPIO_writePin(RST_PIN, 1);
+    DEVICE_DELAY_US(2);
+    
+    DS1302_WriteByte(cmd);
+    
+    // Okuma için pini giriş (Input) yap
+    GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_IN);
+    veri = DS1302_ReadByte();
+    
+    // İşlem bitince tekrar çıkış (Output) yap
+    GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_writePin(RST_PIN, 0);
+    
+    return veri;
+}
+
+// --- ANA PROGRAM ---
+void main(void) {
+    Device_init();
+    Device_initGPIO();
+    Interrupt_initModule();
+    Interrupt_initVectorTable();
+
+    // 1. Pinlerin Çıkış Olarak Ayarlanması
+    GPIO_setPadConfig(RST_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setDirectionMode(RST_PIN, GPIO_DIR_MODE_OUT);
+    
+    GPIO_setPadConfig(CLK_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setDirectionMode(CLK_PIN, GPIO_DIR_MODE_OUT);
+    
+    GPIO_setPadConfig(DAT_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_OUT);
+
+    GPIO_writePin(RST_PIN, 0);
+    GPIO_writePin(CLK_PIN, 0);
+
+    // 2. DS1302'yi Uyandırma ve Başlatma
+    DS1302_Yaz(0x8E, 0x00); // Yazma Korumasını (WP) kapat
+    DS1302_Yaz(0x80, 0x00); // Saniyeyi 0 yap ve Saati Başlat (CH = 0)
+
+    EINT; 
+    ERTM;
+
+    while(1) {
+        // 0x81 adresi saniyeyi okur
+        saniye_bcd = DS1302_Oku(0x81);
+        
+        // DS1302 veriyi BCD formatında verir, biz normal sayıya (Decimal) çeviriyoruz
+        saniye_dec = (saniye_bcd & 0x0F) + ((saniye_bcd >> 4) * 10);
+
+        DEVICE_DELAY_US(500000); // Yarım saniye bekle
+    }
+}
