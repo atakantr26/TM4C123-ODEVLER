@@ -478,3 +478,41 @@ void main(void) {
     }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    while(1) {
+        // Gürültüyü engellemek için peş peşe 2 kez oku
+        uint16_t okuma1 = DS1302_Oku(0x81) & 0x7F;
+        uint16_t okuma2 = DS1302_Oku(0x81) & 0x7F;
+
+        // Eğer iki okuma da aynıysa (gürültü yoksa) işlemi yap
+        if(okuma1 == okuma2) {
+            okunan_saniye = (okuma1 & 0x0F) + ((okuma1 >> 4) * 10);
+
+            // Saniye mantıklı bir değerdeyse ve değiştiyse güncelle
+            if(okunan_saniye != eski_saniye && okunan_saniye < 60) {
+                saniye_dec = okunan_saniye;  
+                eski_saniye = okunan_saniye; 
+                loop_sayaci++; 
+            }
+        }
+
+        DEVICE_DELAY_US(50000); // 50 ms bekle
+    }
+
