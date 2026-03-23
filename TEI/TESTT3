@@ -1,0 +1,238 @@
+#include "device.h"
+#include "driverlib.h"
+#include <stdint.h>
+
+/* =========================
+   DS1302 PINLERİ
+   ========================= */
+#define DS1302_RST_PIN   36U
+#define DS1302_DAT_PIN   35U
+#define DS1302_CLK_PIN   37U
+
+/* =========================
+   DS1302 KOMUTLARI
+   ========================= */
+#define DS1302_SECONDS_W   0x80U
+#define DS1302_SECONDS_R   0x81U
+#define DS1302_WP_W        0x8EU
+
+/* =========================
+   GLOBAL DEĞİŞKENLER
+   ========================= */
+uint8_t raw1 = 0;
+uint8_t raw2 = 0;
+uint8_t sec_dec = 0;
+uint32_t loopSayaci = 0;
+
+/* =========================
+   KÜÇÜK DELAY
+   ========================= */
+static void dly(void)
+{
+    DEVICE_DELAY_US(10);
+}
+
+/* =========================
+   PIN KONTROL FONKSİYONLARI
+   ========================= */
+static void rstH(void) { GPIO_writePin(DS1302_RST_PIN, 1); }
+static void rstL(void) { GPIO_writePin(DS1302_RST_PIN, 0); }
+
+static void clkH(void) { GPIO_writePin(DS1302_CLK_PIN, 1); }
+static void clkL(void) { GPIO_writePin(DS1302_CLK_PIN, 0); }
+
+static void datOut(void)
+{
+    GPIO_setDirectionMode(DS1302_DAT_PIN, GPIO_DIR_MODE_OUT);
+}
+
+static void datIn(void)
+{
+    GPIO_setDirectionMode(DS1302_DAT_PIN, GPIO_DIR_MODE_IN);
+}
+
+static void datW(uint16_t value)
+{
+    GPIO_writePin(DS1302_DAT_PIN, value);
+}
+
+static uint16_t datR(void)
+{
+    return GPIO_readPin(DS1302_DAT_PIN);
+}
+
+/* =========================
+   BCD -> DEC
+   ========================= */
+static uint8_t bcdToDec(uint8_t bcd)
+{
+    return (uint8_t)(((bcd >> 4U) * 10U) + (bcd & 0x0FU));
+}
+
+/* =========================
+   BYTE YAZ (LSB FIRST)
+   ========================= */
+static void writeByte(uint8_t data)
+{
+    uint16_t i;
+
+    datOut();
+
+    for(i = 0; i < 8; i++)
+    {
+        clkL();
+        dly();
+
+        if((data & 0x01U) == 1U)
+        {
+            datW(1);
+        }
+        else
+        {
+            datW(0);
+        }
+
+        dly();
+        clkH();
+        dly();
+
+        data = data >> 1;
+    }
+
+    clkL();
+    dly();
+}
+
+/* =========================
+   BYTE OKU (LSB FIRST)
+   ========================= */
+static uint8_t readByte(void)
+{
+    uint16_t i;
+    uint8_t data = 0;
+
+    datIn();
+
+    for(i = 0; i < 8; i++)
+    {
+        clkL();
+        dly();
+
+        clkH();
+        dly();
+
+        if(datR() == 1U)
+        {
+            data = data | (uint8_t)(1U << i);
+        }
+
+        clkL();
+        dly();
+    }
+
+    return data;
+}
+
+/* =========================
+   REGISTER YAZ
+   ========================= */
+static void writeReg(uint8_t cmd, uint8_t value)
+{
+    rstL();
+    clkL();
+    dly();
+
+    rstH();
+    dly();
+
+    writeByte(cmd);
+    writeByte(value);
+
+    rstL();
+    clkL();
+    dly();
+}
+
+/* =========================
+   REGISTER OKU
+   ========================= */
+static uint8_t readReg(uint8_t cmd)
+{
+    uint8_t value;
+
+    rstL();
+    clkL();
+    dly();
+
+    rstH();
+    dly();
+
+    writeByte(cmd);
+
+    datIn();
+    dly();
+
+    value = readByte();
+
+    rstL();
+    clkL();
+    dly();
+
+    return value;
+}
+
+/* =========================
+   DS1302 INIT
+   ========================= */
+static void ds1302_init(void)
+{
+    GPIO_setDirectionMode(DS1302_RST_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_setDirectionMode(DS1302_CLK_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_setDirectionMode(DS1302_DAT_PIN, GPIO_DIR_MODE_OUT);
+
+    GPIO_setPadConfig(DS1302_RST_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setPadConfig(DS1302_CLK_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setPadConfig(DS1302_DAT_PIN, GPIO_PIN_TYPE_STD);
+
+    GPIO_setQualificationMode(DS1302_RST_PIN, GPIO_QUAL_ASYNC);
+    GPIO_setQualificationMode(DS1302_CLK_PIN, GPIO_QUAL_ASYNC);
+    GPIO_setQualificationMode(DS1302_DAT_PIN, GPIO_QUAL_ASYNC);
+
+    rstL();
+    clkL();
+    datW(0);
+    dly();
+
+    /* Write Protect kapat */
+    writeReg(DS1302_WP_W, 0x00U);
+    dly();
+
+    /* CH bitini temizlemeyi dene */
+    raw1 = readReg(DS1302_SECONDS_R);
+    raw1 &= 0x7FU;
+    writeReg(DS1302_SECONDS_W, raw1);
+    dly();
+}
+
+/* =========================
+   MAIN
+   ========================= */
+void main(void)
+{
+    Device_init();
+    Device_initGPIO();
+
+    ds1302_init();
+
+    while(1)
+    {
+        raw1 = readReg(DS1302_SECONDS_R);
+        raw2 = readReg(DS1302_SECONDS_R);
+
+        sec_dec = bcdToDec(raw1 & 0x7FU);
+
+        loopSayaci++;
+
+        DEVICE_DELAY_US(500000);
+    }
+}
