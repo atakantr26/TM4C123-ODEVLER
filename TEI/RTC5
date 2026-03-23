@@ -1,0 +1,134 @@
+#ifndef HAL_DS1302_H_
+#define HAL_DS1302_H_
+
+#include "driverlib.h"
+#include "device.h"
+
+#define RST_PIN 13
+#define DAT_PIN 14
+#define CLK_PIN 15
+
+void HAL_DS1302_Init(void);
+void HAL_DS1302_WriteByte(uint16_t data);
+uint16_t HAL_DS1302_ReadByte(void);
+void HAL_DS1302_PinDir(bool is_input);
+
+#endif
+
+
+
+
+
+#include "hal_ds1302.h"
+
+void HAL_DS1302_Init(void) {
+    GPIO_setDirectionMode(RST_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_setDirectionMode(CLK_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_writePin(RST_PIN, 0);
+    GPIO_writePin(CLK_PIN, 0);
+}
+
+void HAL_DS1302_PinDir(bool is_input) {
+    if(is_input) {
+        GPIO_setPadConfig(DAT_PIN, GPIO_PIN_TYPE_PULLUP);
+        GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_IN);
+    } else {
+        GPIO_setPadConfig(DAT_PIN, GPIO_PIN_TYPE_STD);
+        GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_OUT);
+    }
+}
+
+void HAL_DS1302_WriteByte(uint16_t data) {
+    int i;
+    for(i = 0; i < 8; i++) {
+        GPIO_writePin(DAT_PIN, (data >> i) & 0x01);
+        GPIO_writePin(CLK_PIN, 1); DEVICE_DELAY_US(20);
+        GPIO_writePin(CLK_PIN, 0); DEVICE_DELAY_US(20);
+    }
+}
+
+uint16_t HAL_DS1302_ReadByte(void) {
+    int i;
+    uint16_t data = 0;
+    for(i = 0; i < 8; i++) {
+        if(GPIO_readPin(DAT_PIN)) data |= (1 << i);
+        GPIO_writePin(CLK_PIN, 1); DEVICE_DELAY_US(20);
+        GPIO_writePin(CLK_PIN, 0); DEVICE_DELAY_US(20);
+    }
+    return data;
+}
+
+
+
+
+#ifndef BSP_DS1302_H_
+#define BSP_DS1302_H_
+
+#include "hal_ds1302.h"
+
+void BSP_DS1302_Config(void);
+void RTC_Yaz(uint16_t adres, uint16_t veri);
+uint16_t RTC_Oku(uint16_t adres);
+
+#endif
+
+
+
+#include "bsp_ds1302.h"
+
+void BSP_DS1302_Config(void) {
+    HAL_DS1302_Init();
+    RTC_Yaz(0x8E, 0x00); // Korumayı kaldır
+    RTC_Yaz(0x80, 0x00); // Başlat
+}
+
+void RTC_Yaz(uint16_t adres, uint16_t veri) {
+    GPIO_writePin(RST_PIN, 1); DEVICE_DELAY_US(20);
+    HAL_DS1302_WriteByte(adres);
+    HAL_DS1302_WriteByte(veri);
+    GPIO_writePin(RST_PIN, 0);
+}
+
+uint16_t RTC_Oku(uint16_t adres) {
+    uint16_t sonuc;
+    GPIO_writePin(RST_PIN, 1); DEVICE_DELAY_US(20);
+    HAL_DS1302_WriteByte(adres);
+    HAL_DS1302_PinDir(true); // Giriş yap
+    sonuc = HAL_DS1302_ReadByte();
+    HAL_DS1302_PinDir(false); // Çıkış yap
+    GPIO_writePin(RST_PIN, 0);
+    return sonuc;
+}
+
+
+
+
+#include "driverlib.h"
+#include "device.h"
+#include "bsp_ds1302.h"
+
+uint16_t saniye_dec, dakika_dec, saat_dec;
+uint32_t loop_sayaci = 0;
+
+void main(void) {
+    Device_init();
+    Device_initGPIO();
+
+    BSP_DS1302_Config();
+
+    while(1) {
+        uint16_t s = RTC_Oku(0x81);
+        uint16_t m = RTC_Oku(0x83);
+        uint16_t h = RTC_Oku(0x85);
+
+        saniye_dec = (s & 0x0F) + ((s >> 4) * 10);
+        dakika_dec = (m & 0x0F) + ((m >> 4) * 10);
+        saat_dec   = (h & 0x0F) + ((h >> 4) * 10);
+
+        loop_sayaci++;
+        DEVICE_DELAY_US(1000000); 
+    }
+}
+
+
