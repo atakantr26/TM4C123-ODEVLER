@@ -516,3 +516,126 @@ void main(void) {
         DEVICE_DELAY_US(50000); // 50 ms bekle
     }
 
+
+
+
+
+
+
+
+
+
+
+
+#include "driverlib.h"
+#include "device.h"
+
+// --- PİN AYARLARI ---
+#define RST_PIN 36  
+#define DAT_PIN 35  
+#define CLK_PIN 37  
+
+uint16_t saniye_bcd = 0;
+uint16_t saniye_dec = 0;
+uint32_t loop_sayaci = 0;
+uint16_t eski_saniye = 99; 
+
+void DS1302_Yaz(uint16_t cmd, uint16_t data) {
+    int i;
+    GPIO_writePin(RST_PIN, 1);
+    DEVICE_DELAY_US(15); 
+    
+    for(i = 0; i < 8; i++) {
+        GPIO_writePin(DAT_PIN, (cmd & 1));
+        cmd >>= 1;
+        GPIO_writePin(CLK_PIN, 1); DEVICE_DELAY_US(15);
+        GPIO_writePin(CLK_PIN, 0); DEVICE_DELAY_US(15);
+    }
+    for(i = 0; i < 8; i++) {
+        GPIO_writePin(DAT_PIN, (data & 1));
+        data >>= 1;
+        GPIO_writePin(CLK_PIN, 1); DEVICE_DELAY_US(15);
+        GPIO_writePin(CLK_PIN, 0); DEVICE_DELAY_US(15);
+    }
+    GPIO_writePin(RST_PIN, 0);
+}
+
+uint16_t DS1302_Oku(uint16_t cmd) {
+    uint16_t data = 0;
+    int i;
+    
+    GPIO_writePin(RST_PIN, 1);
+    DEVICE_DELAY_US(15);
+    
+    for(i = 0; i < 8; i++) {
+        GPIO_writePin(DAT_PIN, (cmd & 1));
+        cmd >>= 1;
+        GPIO_writePin(CLK_PIN, 1); DEVICE_DELAY_US(15);
+        GPIO_writePin(CLK_PIN, 0); DEVICE_DELAY_US(15);
+    }
+    
+    GPIO_setPadConfig(DAT_PIN, GPIO_PIN_TYPE_PULLUP);
+    GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_IN);
+    DEVICE_DELAY_US(20); 
+    
+    for(i = 0; i < 8; i++) {
+        if(GPIO_readPin(DAT_PIN)) data |= (1 << i);
+        GPIO_writePin(CLK_PIN, 1); DEVICE_DELAY_US(15);
+        GPIO_writePin(CLK_PIN, 0); DEVICE_DELAY_US(15);
+    }
+    
+    GPIO_setPadConfig(DAT_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_writePin(RST_PIN, 0);
+    
+    return data;
+}
+
+void main(void) {
+    int k;
+    uint16_t okunan_saniye;
+    
+    Device_init();
+    Device_initGPIO();
+    Interrupt_initModule();
+    Interrupt_initVectorTable();
+
+    GPIO_setPadConfig(RST_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setDirectionMode(RST_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_setPadConfig(CLK_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setDirectionMode(CLK_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_setPadConfig(DAT_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_OUT);
+
+    GPIO_writePin(RST_PIN, 0);
+    GPIO_writePin(DAT_PIN, 0);
+    DEVICE_DELAY_US(10000); 
+
+    for(k = 0; k < 16; k++) {
+        GPIO_writePin(CLK_PIN, 1); DEVICE_DELAY_US(15);
+        GPIO_writePin(CLK_PIN, 0); DEVICE_DELAY_US(15);
+    }
+    DEVICE_DELAY_US(1000); 
+
+    DS1302_Yaz(0x8E, 0x00); 
+    DS1302_Yaz(0x80, 0x00); 
+
+    EINT; ERTM;
+
+    while(1) {
+        uint16_t okuma1 = DS1302_Oku(0x81) & 0x7F;
+        uint16_t okuma2 = DS1302_Oku(0x81) & 0x7F;
+
+        if(okuma1 == okuma2) {
+            okunan_saniye = (okuma1 & 0x0F) + ((okuma1 >> 4) * 10);
+
+            if(okunan_saniye != eski_saniye && okunan_saniye < 60) {
+                saniye_dec = okunan_saniye;  
+                eski_saniye = okunan_saniye; 
+                loop_sayaci++; 
+            }
+        }
+        DEVICE_DELAY_US(50000); 
+    }
+}
+
