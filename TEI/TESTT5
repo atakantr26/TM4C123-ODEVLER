@@ -1,0 +1,78 @@
+#include "driverlib.h"
+#include "device.h"
+
+#define RST_PIN 13  
+#define DAT_PIN 14  
+#define CLK_PIN 15  
+
+uint16_t saniye_dec, dakika_dec, saat_dec;
+uint32_t loop_sayaci = 0;
+
+// --- EN SADE TRANSMIT FONKSİYONU ---
+// Hem yazma hem okuma için ortak 8-bit kaydırma yapar
+uint16_t DS1302_Xfer(uint16_t data, bool is_read) {
+    int i;
+    uint16_t read_val = 0;
+
+    for(i = 0; i < 8; i++) {
+        if(!is_read) {
+            GPIO_writePin(DAT_PIN, (data >> i) & 0x01); // Yazma: LSB ilk
+        } else {
+            if(GPIO_readPin(DAT_PIN)) read_val |= (1 << i); // Okuma: LSB ilk
+        }
+        
+        GPIO_writePin(CLK_PIN, 1); DEVICE_DELAY_US(10);
+        GPIO_writePin(CLK_PIN, 0); DEVICE_DELAY_US(10);
+    }
+    return read_val;
+}
+
+// --- SADELEŞTİRİLMİŞ EMİR FONKSİYONLARI ---
+void RTC_Yaz(uint16_t adres, uint16_t veri) {
+    GPIO_writePin(RST_PIN, 1);
+    DEVICE_DELAY_US(10);
+    DS1302_Xfer(adres, false); // Önce adresi gönder
+    DS1302_Xfer(veri, false);  // Sonra veriyi yaz
+    GPIO_writePin(RST_PIN, 0);
+}
+
+uint16_t RTC_Oku(uint16_t adres) {
+    uint16_t sonuc;
+    GPIO_writePin(RST_PIN, 1);
+    DEVICE_DELAY_US(10);
+    DS1302_Xfer(adres, false); // Önce adresi gönder
+    
+    GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_IN); // Okuma modu
+    sonuc = DS1302_Xfer(0, true);
+    GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_OUT); // Çıkışa geri dön
+    
+    GPIO_writePin(RST_PIN, 0);
+    return sonuc;
+}
+
+void main(void) {
+    Device_init();
+    Device_initGPIO();
+
+    GPIO_setDirectionMode(RST_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_setDirectionMode(CLK_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_OUT);
+
+    // Başlatma (Sadece 1 kez)
+    RTC_Yaz(0x8E, 0x00); // WP Kapalı
+    RTC_Yaz(0x80, 0x00); // Saniyeyi başlat
+
+    while(1) {
+        // Doğrudan register okumaları (BCD -> DEC çevrimi içinde)
+        uint16_t s_bcd = RTC_Oku(0x81);
+        uint16_t m_bcd = RTC_Oku(0x83);
+        uint16_t h_bcd = RTC_Oku(0x85);
+
+        saniye_dec = (s_bcd & 0x0F) + ((s_bcd >> 4) * 10);
+        dakika_dec = (m_bcd & 0x0F) + ((m_bcd >> 4) * 10);
+        saat_dec   = (h_bcd & 0x0F) + ((h_bcd >> 4) * 10);
+
+        loop_sayaci++;
+        DEVICE_DELAY_US(1000000); // 1 Saniye bekle
+    }
+}
