@@ -461,3 +461,123 @@ void main(void) {
     }
 }
 
+
+
+
+
+
+
+#include "driverlib.h"
+#include "device.h"
+
+// --- PİN AYARLARI (GPIO 13, 14, 15) ---
+#define RST_PIN 13  
+#define DAT_PIN 14  
+#define CLK_PIN 15  
+
+// --- DEĞİŞKENLER ---
+uint16_t saniye_dec = 0;
+uint16_t dakika_dec = 0;
+uint16_t saat_dec   = 0;
+uint32_t loop_sayaci = 0;
+uint16_t eski_saniye = 99; 
+
+// --- DS1302 ALT FONKSİYONLARI ---
+void DS1302_Yaz(uint16_t cmd, uint16_t data) {
+    int i;
+    GPIO_writePin(RST_PIN, 1);
+    DEVICE_DELAY_US(20); 
+    for(i = 0; i < 8; i++) {
+        GPIO_writePin(DAT_PIN, (cmd & 1));
+        cmd >>= 1;
+        GPIO_writePin(CLK_PIN, 1); DEVICE_DELAY_US(20);
+        GPIO_writePin(CLK_PIN, 0); DEVICE_DELAY_US(20);
+    }
+    for(i = 0; i < 8; i++) {
+        GPIO_writePin(DAT_PIN, (data & 1));
+        data >>= 1;
+        GPIO_writePin(CLK_PIN, 1); DEVICE_DELAY_US(20);
+        GPIO_writePin(CLK_PIN, 0); DEVICE_DELAY_US(20);
+    }
+    GPIO_writePin(RST_PIN, 0);
+}
+
+uint16_t DS1302_Oku(uint16_t cmd) {
+    uint16_t data = 0;
+    int i;
+    GPIO_writePin(RST_PIN, 1);
+    DEVICE_DELAY_US(20);
+    for(i = 0; i < 8; i++) {
+        GPIO_writePin(DAT_PIN, (cmd & 1));
+        cmd >>= 1;
+        GPIO_writePin(CLK_PIN, 1); DEVICE_DELAY_US(20);
+        GPIO_writePin(CLK_PIN, 0); DEVICE_DELAY_US(20);
+    }
+    GPIO_setPadConfig(DAT_PIN, GPIO_PIN_TYPE_PULLUP);
+    GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_IN);
+    DEVICE_DELAY_US(30); 
+    for(i = 0; i < 8; i++) {
+        if(GPIO_readPin(DAT_PIN)) data |= (1 << i);
+        GPIO_writePin(CLK_PIN, 1); DEVICE_DELAY_US(20);
+        GPIO_writePin(CLK_PIN, 0); DEVICE_DELAY_US(20);
+    }
+    GPIO_setPadConfig(DAT_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_writePin(RST_PIN, 0);
+    return data;
+}
+
+// BCD formatını Decimal'e çeviren yardımcı fonksiyon
+uint16_t BCDtoDEC(uint16_t bcd) {
+    return ((bcd & 0xF0) >> 4) * 10 + (bcd & 0x0F);
+}
+
+void main(void) {
+    Device_init();
+    Device_initGPIO();
+    DINT; 
+
+    // Pin Konfigürasyonu
+    GPIO_setPadConfig(RST_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setDirectionMode(RST_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_setPadConfig(CLK_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setDirectionMode(CLK_PIN, GPIO_DIR_MODE_OUT);
+    GPIO_setPadConfig(DAT_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setDirectionMode(DAT_PIN, GPIO_DIR_MODE_OUT);
+
+    GPIO_writePin(RST_PIN, 0);
+    DEVICE_DELAY_US(10000); 
+
+    // DS1302 Başlat (Yazma korumasını kapat ve saat çalışmıyorsa başlat)
+    DS1302_Yaz(0x8E, 0x00); 
+    // Saat, Dakika, Saniye başlangıçta 0 olsun (Opsiyonel: 0x80 register'ının 7. biti 0 olmalı ki CH dursun/çalışsın)
+    DS1302_Yaz(0x80, 0x00); // Saniye: 00
+    DS1302_Yaz(0x82, 0x00); // Dakika: 00
+    DS1302_Yaz(0x84, 0x00); // Saat: 00 (24h formatı)
+
+    while(1) {
+        // Doğrudan DS1302 Register'larından oku
+        uint16_t s_bcd = DS1302_Oku(0x81) & 0x7F; // Saniye
+        uint16_t m_bcd = DS1302_Oku(0x83) & 0x7F; // Dakika
+        uint16_t h_bcd = DS1302_Oku(0x85) & 0x3F; // Saat (24h modu için maske)
+
+        uint16_t s_temp = BCDtoDEC(s_bcd);
+
+        // Saniye değiştiğinde tüm zamanı güncelle ve loop_sayaci artır
+        if(s_temp != eski_saniye && s_temp < 60) {
+            saniye_dec = s_temp;
+            dakika_dec = BCDtoDEC(m_bcd);
+            saat_dec   = BCDtoDEC(h_bcd);
+            
+            eski_saniye = s_temp;
+            loop_sayaci++;
+            
+            // O hatalı atlamaları engellemek için körleme süresi
+            DEVICE_DELAY_US(850000); 
+        }
+
+        DEVICE_DELAY_US(10000); 
+    }
+}
+
+
