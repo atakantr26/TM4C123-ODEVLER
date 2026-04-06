@@ -62,3 +62,30 @@ void init_ePWM1_DriverLib(void)
                                   EPWM_AQ_OUTPUT_LOW, 
                                   EPWM_AQ_OUTPUT_ON_TIMEBASE_DOWN_CMPA);
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// İstediğin frekansı (Hz) ve görev döngüsünü (%) tek satırda ayarla
+void setPWM_Frekans_ve_Duty(uint32_t frekans_Hz, uint16_t yuzde)
+{
+    // 1. Yeni Tepe Değerini (PRD) Hesapla 
+    // TBCLK = 12.5 MHz (12.500.000 tık). Up-Down modunda olduğumuz için 2'ye böldük: 6.250.000
+    uint16_t yeniPRD = 6250000U / frekans_Hz;
+    EPWM_setTimeBasePeriod(EPWM1_BASE, yeniPRD);
+
+    // 2. Yeni Tepe Değerine Göre CMPA (Duty Cycle) Hesapla
+    uint16_t yeniCMPA = (yeniPRD * yuzde) / 100U; 
+    EPWM_setCounterCompareValue(EPWM1_BASE, EPWM_COUNTER_COMPARE_A, yeniCMPA);
+}
