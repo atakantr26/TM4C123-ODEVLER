@@ -1,0 +1,64 @@
+#include "driverlib.h"
+#include "device.h"
+
+// Fonksiyon prototipi
+void init_ePWM1_DriverLib(void);
+
+void main(void)
+{
+    // 1. Sistem Saati ve Temel Donanım İlklendirmesi (TI Standartı)
+    Device_init();
+    
+    // 2. GPIO İlklendirmesi
+    Device_initGPIO();
+
+    // 3. ePWM1A için Pin Yönlendirmesi (Genelde GPIO0 kullanılır)
+    GPIO_setPadConfig(0, GPIO_PIN_TYPE_STD);
+    GPIO_setPinConfig(GPIO_0_EPWM1_A);
+
+    // 4. Kesmeleri (Interrupt) Temizle ve İlklendir
+    Interrupt_initModule();
+    Interrupt_initVectorTable();
+
+    // 5. ePWM Senkronizasyonunu Durdur, Ayarları Yap, Tekrar Başlat
+    SysCtl_disablePeripheral(SYSCTL_PERIPH_CLK_TBCLKSYNC);
+    
+    init_ePWM1_DriverLib(); // Bizim yazdığımız konfigürasyon
+    
+    SysCtl_enablePeripheral(SYSCTL_PERIPH_CLK_TBCLKSYNC);
+
+    // 6. Sonsuz Döngü (İşlemci burada bekler, donanım arka planda PWM üretmeye devam eder)
+    while(1)
+    {
+        // Ana kod buraya gelir
+    }
+}
+
+// Bizim 5 Adımlık ePWM Konfigürasyon Fonksiyonumuz
+void init_ePWM1_DriverLib(void)
+{
+    // ADIM 1: Zaman Tabanı Saati (TBCLK) Ayarı (100 MHz -> 12.5 MHz)
+    EPWM_setClockPrescaler(EPWM1_BASE, EPWM_CLOCK_DIVIDER_1, EPWM_HSCLOCK_DIVIDER_8);
+
+    // ADIM 2: Sayma Modu Ayarı (Up-Down)
+    EPWM_setTimeBaseCounterMode(EPWM1_BASE, EPWM_COUNTER_MODE_UP_DOWN);
+    EPWM_disablePhaseShiftLoad(EPWM1_BASE);
+    EPWM_setTimeBaseCounter(EPWM1_BASE, 0U);
+
+    // ADIM 3: Periyot Ayarı (25000 = 4 ms / 250 Hz)
+    EPWM_setTimeBasePeriod(EPWM1_BASE, 25000U);
+
+    // ADIM 4: Görev Döngüsü / Duty Cycle (%50 için 12500)
+    EPWM_setCounterCompareValue(EPWM1_BASE, EPWM_COUNTER_COMPARE_A, 12500U);
+
+    // ADIM 5: Pin Eylemleri (Yukarı çıkarken 1 yap, aşağı inerken 0 yap)
+    EPWM_setActionQualifierAction(EPWM1_BASE, 
+                                  EPWM_AQ_OUTPUT_A, 
+                                  EPWM_AQ_OUTPUT_HIGH, 
+                                  EPWM_AQ_OUTPUT_ON_TIMEBASE_UP_CMPA);
+                                  
+    EPWM_setActionQualifierAction(EPWM1_BASE, 
+                                  EPWM_AQ_OUTPUT_A, 
+                                  EPWM_AQ_OUTPUT_LOW, 
+                                  EPWM_AQ_OUTPUT_ON_TIMEBASE_DOWN_CMPA);
+}
