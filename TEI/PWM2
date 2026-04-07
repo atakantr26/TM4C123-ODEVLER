@@ -1,0 +1,124 @@
+#include "driverlib.h"
+#include "device.h"
+
+// ==========================================
+// --- PWM MOD SEÇİM EKRANI ---
+#define MOD_UP        0
+#define MOD_DOWN      1
+#define MOD_UP_DOWN   2
+
+// AŞAĞIDAKİ RAKAMI DEĞİŞTİREREK TÜM MİMARİYİ TEK TUŞLA KONTROL ET
+#define SECILEN_PWM_MODU  MOD_UP_DOWN  
+// ==========================================
+
+// Fonksiyon Prototipleri
+void setPWM_Frekans_ve_Duty(uint32_t frekans_Hz, uint16_t yuzde);
+void init_ePWM1_DriverLib(void);
+
+
+void main(void)
+{
+    // 1. Sistem Saati ve Temel Donanım İlklendirmesi (TI Standartı)
+    Device_init();
+
+    // 2. GPIO İlklendirmesi
+    Device_initGPIO();
+
+    // 3. ePWM1A ve ePWM1B için Pin Yönlendirmesi
+    GPIO_setPadConfig(0, GPIO_PIN_TYPE_STD);
+    GPIO_setPinConfig(GPIO_0_EPWM1A);     // Mavi sinyal
+    
+    GPIO_setPadConfig(1, GPIO_PIN_TYPE_STD);
+    GPIO_setPinConfig(GPIO_1_EPWM1B);     // Pembe (Terslenmiş) sinyal
+
+    // 4. ePWM Senkronizasyonunu Durdur (Ayarlar yapılırken yanlış sinyal çıkmasın)
+    SysCtl_disablePeripheral(SYSCTL_PERIPH_CLK_TBCLKSYNC);
+
+    // 5. Bizim 5 Adımlık ePWM Konfigürasyonumuzu Çağır
+    init_ePWM1_DriverLib();
+
+    // 6. Ayarlar bitti, saatleri serbest bırak (PWM üretimi başlar)
+    SysCtl_enablePeripheral(SYSCTL_PERIPH_CLK_TBCLKSYNC);
+
+    // Sonsuz Döngü (İşlemci burada bekler, donanım arka planda çalışır)
+    while(1)
+    {
+        // İleride potansiyometre okuma veya PID döngüsü buraya gelecek
+    }
+}
+
+
+// İstenilen frekansı (Hz) ve görev döngüsünü (%) donanıma yazan fonksiyon
+void setPWM_Frekans_ve_Duty(uint32_t frekans_Hz, uint16_t yuzde)
+{
+    uint16_t yeniPRD;
+    uint16_t yeniCMPA;
+
+#if (SECILEN_PWM_MODU == MOD_UP_DOWN)
+    // Up-Down Modu Matematiği (12.5 MHz / 2)
+    yeniPRD = 6250000U / frekans_Hz; 
+    
+    // CMPA Hesabı: Taşmayı önlemek için uint32_t cast ve Dağın tepesini kesmek için (100 - yüzde) mantığı
+    yeniCMPA = ((uint32_t)yeniPRD * (100U - yuzde)) / 100U;
+
+#elif (SECILEN_PWM_MODU == MOD_UP)
+    // Up Modu Matematiği (12.5 MHz)
+    yeniPRD = 12500000U / frekans_Hz; 
+    
+    // Up modunda sinyal 0'da başlayıp CMPA'da kesileceği için düz yüzde hesabı
+    yeniCMPA = ((uint32_t)yeniPRD * yuzde) / 100U; 
+#endif
+
+    // Yeni hesaplanan Tepe(PRD) ve Eşik(CMPA) değerlerini donanıma yaz
+    EPWM_setTimeBasePeriod(EPWM1_BASE, yeniPRD);
+    EPWM_setCounterCompareValue(EPWM1_BASE, EPWM_COUNTER_COMPARE_A, yeniCMPA);
+}
+
+
+// PWM Donanımının Ana Kurulum Fonksiyonu
+void init_ePWM1_DriverLib(void)
+{
+    // ADIM 1: Zaman Tabanı Saati (TBCLK) Ayarı (100 MHz -> 12.5 MHz / 80ns tık)
+    EPWM_setClockPrescaler(EPWM1_BASE, EPWM_CLOCK_DIVIDER_1, EPWM_HSCLOCK_DIVIDER_8);
+
+#if (SECILEN_PWM_MODU == MOD_UP_DOWN)
+    // ADIM 2: Sayma Modu (Up-Down)
+    EPWM_setTimeBaseCounterMode(EPWM1_BASE, EPWM_COUNTER_MODE_UP_DOWN);
+    EPWM_disablePhaseShiftLoad(EPWM1_BASE);
+    EPWM_setTimeBaseCounter(EPWM1_BASE, 0U);
+
+    // ADIM 3: Frekans ve Duty Ayarı (Şu an 250 Hz, %50 Duty olarak ayarlı)
+    setPWM_Frekans_ve_Duty(250, 50);
+
+    // ADIM 4: Pin Eylemleri (Dağın tepesine çıkarken CMPA'da HIGH, inerken CMPA'da LOW yap)
+    EPWM_setActionQualifierAction(EPWM1_BASE, EPWM_AQ_OUTPUT_A, EPWM_AQ_OUTPUT_HIGH, EPWM_AQ_OUTPUT_ON_TIMEBASE_UP_CMPA);
+    EPWM_setActionQualifierAction(EPWM1_BASE, EPWM_AQ_OUTPUT_A, EPWM_AQ_OUTPUT_LOW,  EPWM_AQ_OUTPUT_ON_TIMEBASE_DOWN_CMPA);
+
+#elif (SECILEN_PWM_MODU == MOD_UP)
+    // ADIM 2: Sayma Modu (Up)
+    EPWM_setTimeBaseCounterMode(EPWM1_BASE, EPWM_COUNTER_MODE_UP);
+    EPWM_disablePhaseShiftLoad(EPWM1_BASE);
+    EPWM_setTimeBaseCounter(EPWM1_BASE, 0U);
+
+    // ADIM 3: Frekans ve Duty Ayarı
+    setPWM_Frekans_ve_Duty(250, 50);
+
+    // ADIM 4: Pin Eylemleri (0 noktasında HIGH yap, CMPA'ya çarpınca LOW yap)
+    EPWM_setActionQualifierAction(EPWM1_BASE, EPWM_AQ_OUTPUT_A, EPWM_AQ_OUTPUT_HIGH, EPWM_AQ_OUTPUT_ON_TIMEBASE_ZERO);
+    EPWM_setActionQualifierAction(EPWM1_BASE, EPWM_AQ_OUTPUT_A, EPWM_AQ_OUTPUT_LOW,  EPWM_AQ_OUTPUT_ON_TIMEBASE_UP_CMPA);
+#endif
+
+    // ADIM 5: Dead-Band (Ölü Zaman) Ayarı
+    // Mod Seçimi: Hem yükselen (RED) hem düşen (FED) kenarda gecikme uygulansın
+    EPWM_setDeadBandDelayMode(EPWM1_BASE, EPWM_DB_RED, true);
+    EPWM_setDeadBandDelayMode(EPWM1_BASE, EPWM_DB_FED, true);
+
+    // Polarite Seçimi: A sinyali düz bırakılır, B sinyali donanımsal olarak terslenir
+    EPWM_setDeadBandDelayPolarity(EPWM1_BASE, EPWM_DB_RED, EPWM_DB_POLARITY_ACTIVE_HIGH);
+    EPWM_setDeadBandDelayPolarity(EPWM1_BASE, EPWM_DB_FED, EPWM_DB_POLARITY_ACTIVE_LOW);
+
+    // Ölü Zaman Süresi (Dikkat: 2500 tık = 200us. Sadece osiloskopta net görmek için yapıldı.)
+    // Normal bir motor sürücüde burası yaklaşık 25 civarı (2us) olmalıdır!
+    EPWM_setRisingEdgeDelayCount(EPWM1_BASE, 2500U);
+    EPWM_setFallingEdgeDelayCount(EPWM1_BASE, 2500U);
+}
