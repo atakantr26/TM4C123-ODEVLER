@@ -15,7 +15,6 @@
 void setPWM_Frekans_ve_Duty(uint32_t frekans_Hz, uint16_t yuzde);
 void init_ePWM1_DriverLib(void);
 
-
 void main(void)
 {
     // 1. Sistem Saati ve Temel Donanım İlklendirmesi (TI Standartı)
@@ -26,15 +25,15 @@ void main(void)
 
     // 3. ePWM1A ve ePWM1B için Pin Yönlendirmesi
     GPIO_setPadConfig(0, GPIO_PIN_TYPE_STD);
-    GPIO_setPinConfig(GPIO_0_EPWM1A);     // Mavi sinyal
+    GPIO_setPinConfig(GPIO_0_EPWM1A);     // Mavi sinyal (A Pini)
     
     GPIO_setPadConfig(1, GPIO_PIN_TYPE_STD);
-    GPIO_setPinConfig(GPIO_1_EPWM1B);     // Pembe (Terslenmiş) sinyal
+    GPIO_setPinConfig(GPIO_1_EPWM1B);     // Pembe sinyal (B Pini - Terslenmiş)
 
     // 4. ePWM Senkronizasyonunu Durdur (Ayarlar yapılırken yanlış sinyal çıkmasın)
     SysCtl_disablePeripheral(SYSCTL_PERIPH_CLK_TBCLKSYNC);
 
-    // 5. Bizim 5 Adımlık ePWM Konfigürasyonumuzu Çağır
+    // 5. Bizim ePWM Konfigürasyonumuzu Çağır
     init_ePWM1_DriverLib();
 
     // 6. Ayarlar bitti, saatleri serbest bırak (PWM üretimi başlar)
@@ -43,7 +42,7 @@ void main(void)
     // Sonsuz Döngü (İşlemci burada bekler, donanım arka planda çalışır)
     while(1)
     {
-        // İleride potansiyometre okuma veya PID döngüsü buraya gelecek
+        // İleride yazacağın ana kodlar buraya gelecek
     }
 }
 
@@ -66,6 +65,13 @@ void setPWM_Frekans_ve_Duty(uint32_t frekans_Hz, uint16_t yuzde)
     yeniPRD = 12500000U / frekans_Hz; 
     
     // Up modunda sinyal 0'da başlayıp CMPA'da kesileceği için düz yüzde hesabı
+    yeniCMPA = ((uint32_t)yeniPRD * yuzde) / 100U; 
+
+#elif (SECILEN_PWM_MODU == MOD_DOWN)
+    // Down Modu Matematiği (12.5 MHz)
+    yeniPRD = 12500000U / frekans_Hz; 
+    
+    // Down modunda sinyal CMPA'da HIGH olup 0'da LOW olacağı için düz yüzde hesabı
     yeniCMPA = ((uint32_t)yeniPRD * yuzde) / 100U; 
 #endif
 
@@ -106,6 +112,19 @@ void init_ePWM1_DriverLib(void)
     // ADIM 4: Pin Eylemleri (0 noktasında HIGH yap, CMPA'ya çarpınca LOW yap)
     EPWM_setActionQualifierAction(EPWM1_BASE, EPWM_AQ_OUTPUT_A, EPWM_AQ_OUTPUT_HIGH, EPWM_AQ_OUTPUT_ON_TIMEBASE_ZERO);
     EPWM_setActionQualifierAction(EPWM1_BASE, EPWM_AQ_OUTPUT_A, EPWM_AQ_OUTPUT_LOW,  EPWM_AQ_OUTPUT_ON_TIMEBASE_UP_CMPA);
+
+#elif (SECILEN_PWM_MODU == MOD_DOWN)
+    // ADIM 2: Sayma Modu (Down)
+    EPWM_setTimeBaseCounterMode(EPWM1_BASE, EPWM_COUNTER_MODE_DOWN);
+    EPWM_disablePhaseShiftLoad(EPWM1_BASE);
+    EPWM_setTimeBaseCounter(EPWM1_BASE, 0U);
+
+    // ADIM 3: Frekans ve Duty Ayarı
+    setPWM_Frekans_ve_Duty(250, 50);
+
+    // ADIM 4: Pin Eylemleri (Aşağı inerken CMPA'da HIGH yap, 0'a çarpınca LOW yap)
+    EPWM_setActionQualifierAction(EPWM1_BASE, EPWM_AQ_OUTPUT_A, EPWM_AQ_OUTPUT_HIGH, EPWM_AQ_OUTPUT_ON_TIMEBASE_DOWN_CMPA);
+    EPWM_setActionQualifierAction(EPWM1_BASE, EPWM_AQ_OUTPUT_A, EPWM_AQ_OUTPUT_LOW,  EPWM_AQ_OUTPUT_ON_TIMEBASE_ZERO);
 #endif
 
     // ADIM 5: Dead-Band (Ölü Zaman) Ayarı
@@ -117,8 +136,8 @@ void init_ePWM1_DriverLib(void)
     EPWM_setDeadBandDelayPolarity(EPWM1_BASE, EPWM_DB_RED, EPWM_DB_POLARITY_ACTIVE_HIGH);
     EPWM_setDeadBandDelayPolarity(EPWM1_BASE, EPWM_DB_FED, EPWM_DB_POLARITY_ACTIVE_LOW);
 
-    // Ölü Zaman Süresi (Dikkat: 2500 tık = 200us. Sadece osiloskopta net görmek için yapıldı.)
-    // Normal bir motor sürücüde burası yaklaşık 25 civarı (2us) olmalıdır!
+    // Ölü Zaman Süresi (2500 tık = 200us. Sadece osiloskopta bariz görmek için!)
+    // Not: Normal kullanımda burayı 25 (2us) civarına çekmeyi unutma.
     EPWM_setRisingEdgeDelayCount(EPWM1_BASE, 2500U);
     EPWM_setFallingEdgeDelayCount(EPWM1_BASE, 2500U);
 }
