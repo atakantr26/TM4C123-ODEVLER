@@ -1,0 +1,165 @@
+#include "driverlib.h"
+#include "device.h"
+
+// =========================================================================
+// --- 1. KULLANICI KONTROL PANELİ ---
+// =========================================================================
+#define MOD_UP        0
+#define MOD_DOWN      1
+#define MOD_UP_DOWN   2
+
+// SİSTEMİN PWM MODUNU BURADAN SEÇ
+#define SECILEN_PWM_MODU   MOD_UP_DOWN  
+
+#define CLK_100_MHZ   0
+#define CLK_50_MHZ    1
+#define CLK_12_5_MHZ  2
+
+// SİSTEMİN ÇALIŞMA FREKANSINI BURADAN SEÇ
+#define SECILEN_SAAT_HIZI  CLK_12_5_MHZ  
+// =========================================================================
+
+
+// =========================================================================
+// --- 2. OTOMATİK DONANIM VE MATEMATİK BAĞLANTILARI (GİZLİ KISIM) ---
+// =========================================================================
+#if (SECILEN_SAAT_HIZI == CLK_100_MHZ)
+    #define TBCLK_FREKANSI_HZ  100000000U
+    #define CLK_DIV            EPWM_CLOCK_DIVIDER_1
+    #define HSCLK_DIV          EPWM_HSCLOCK_DIVIDER_1
+
+#elif (SECILEN_SAAT_HIZI == CLK_50_MHZ)
+    #define TBCLK_FREKANSI_HZ  50000000U
+    #define CLK_DIV            EPWM_CLOCK_DIVIDER_1
+    #define HSCLK_DIV          EPWM_HSCLOCK_DIVIDER_2
+
+#elif (SECILEN_SAAT_HIZI == CLK_12_5_MHZ)
+    #define TBCLK_FREKANSI_HZ  12500000U
+    #define CLK_DIV            EPWM_CLOCK_DIVIDER_1
+    #define HSCLK_DIV          EPWM_HSCLOCK_DIVIDER_8
+#endif
+// =========================================================================
+
+
+// Fonksiyon Prototipleri
+void setPWM_Frekans_ve_Duty(uint32_t frekans_Hz, uint16_t yuzde);
+void init_ePWM1_DriverLib(void);
+
+
+void main(void)
+{
+    // 1. Sistem Saati ve Temel Donanım İlklendirmesi
+    Device_init();
+
+    // 2. GPIO İlklendirmesi
+    Device_initGPIO();
+
+    // 3. ePWM1A ve ePWM1B için Pin Yönlendirmesi
+    GPIO_setPadConfig(0, GPIO_PIN_TYPE_STD);
+    GPIO_setPinConfig(GPIO_0_EPWM1A);     // Mavi sinyal (A Pini)
+    
+    GPIO_setPadConfig(1, GPIO_PIN_TYPE_STD);
+    GPIO_setPinConfig(GPIO_1_EPWM1B);     // Pembe sinyal (B Pini - Terslenmiş)
+
+    // 4. ePWM Senkronizasyonunu Durdur (Güvenlik)
+    SysCtl_disablePeripheral(SYSCTL_PERIPH_CLK_TBCLKSYNC);
+
+    // 5. ePWM Konfigürasyonunu Çağır
+    init_ePWM1_DriverLib();
+
+    // 6. Ayarlar bitti, saatleri serbest bırak (PWM başlar)
+    SysCtl_enablePeripheral(SYSCTL_PERIPH_CLK_TBCLKSYNC);
+
+    // Sonsuz Döngü
+    while(1)
+    {
+        // PID, ADC okuma veya Trip-Zone kontrolleri buraya gelecek
+    }
+}
+
+
+// İstenilen frekansı (Hz) ve görev döngüsünü (%) donanıma yazan fonksiyon
+void setPWM_Frekans_ve_Duty(uint32_t frekans_Hz, uint16_t yuzde)
+{
+    uint16_t yeniPRD;
+    uint16_t yeniCMPA;
+
+#if (SECILEN_PWM_MODU == MOD_UP_DOWN)
+    // Up-Down Modu (Ana saatin yarısı kullanılır)
+    yeniPRD = (TBCLK_FREKANSI_HZ / 2U) / frekans_Hz; 
+    
+    // Dağın tepesini kesmek için (100 - yüzde) mantığı
+    yeniCMPA = ((uint32_t)yeniPRD * (100U - yuzde)) / 100U;
+
+#elif (SECILEN_PWM_MODU == MOD_UP || SECILEN_PWM_MODU == MOD_DOWN)
+    // Up veya Down Modu (Ana saatin tamamı kullanılır)
+    yeniPRD = TBCLK_FREKANSI_HZ / frekans_Hz; 
+    
+    // Düz yüzde hesabı (0 ile CMPA arası aktif alan)
+    yeniCMPA = ((uint32_t)yeniPRD * yuzde) / 100U; 
+#endif
+
+    // Yeni hesaplanan Tepe(PRD) ve Eşik(CMPA) değerlerini donanıma yaz
+    EPWM_setTimeBasePeriod(EPWM1_BASE, yeniPRD);
+    EPWM_setCounterCompareValue(EPWM1_BASE, EPWM_COUNTER_COMPARE_A, yeniCMPA);
+}
+
+
+// PWM Donanımının Ana Kurulum Fonksiyonu
+void init_ePWM1_DriverLib(void)
+{
+    // ADIM 1: Zaman Tabanı Saati Ayarı (Yukarıdaki seçime göre otomatik belirlenir)
+    EPWM_setClockPrescaler(EPWM1_BASE, CLK_DIV, HSCLK_DIV);
+
+#if (SECILEN_PWM_MODU == MOD_UP_DOWN)
+    // ADIM 2: Sayma Modu (Up-Down)
+    EPWM_setTimeBaseCounterMode(EPWM1_BASE, EPWM_COUNTER_MODE_UP_DOWN);
+    EPWM_disablePhaseShiftLoad(EPWM1_BASE);
+    EPWM_setTimeBaseCounter(EPWM1_BASE, 0U);
+
+    // ADIM 3: Frekans ve Duty Ayarı (Başlangıç: 250 Hz, %50 Duty)
+    setPWM_Frekans_ve_Duty(250, 50);
+
+    // ADIM 4: Pin Eylemleri
+    EPWM_setActionQualifierAction(EPWM1_BASE, EPWM_AQ_OUTPUT_A, EPWM_AQ_OUTPUT_HIGH, EPWM_AQ_OUTPUT_ON_TIMEBASE_UP_CMPA);
+    EPWM_setActionQualifierAction(EPWM1_BASE, EPWM_AQ_OUTPUT_A, EPWM_AQ_OUTPUT_LOW,  EPWM_AQ_OUTPUT_ON_TIMEBASE_DOWN_CMPA);
+
+#elif (SECILEN_PWM_MODU == MOD_UP)
+    // ADIM 2: Sayma Modu (Up)
+    EPWM_setTimeBaseCounterMode(EPWM1_BASE, EPWM_COUNTER_MODE_UP);
+    EPWM_disablePhaseShiftLoad(EPWM1_BASE);
+    EPWM_setTimeBaseCounter(EPWM1_BASE, 0U);
+
+    // ADIM 3: Frekans ve Duty Ayarı (Başlangıç: 250 Hz, %50 Duty)
+    setPWM_Frekans_ve_Duty(250, 50);
+
+    // ADIM 4: Pin Eylemleri 
+    EPWM_setActionQualifierAction(EPWM1_BASE, EPWM_AQ_OUTPUT_A, EPWM_AQ_OUTPUT_HIGH, EPWM_AQ_OUTPUT_ON_TIMEBASE_ZERO);
+    EPWM_setActionQualifierAction(EPWM1_BASE, EPWM_AQ_OUTPUT_A, EPWM_AQ_OUTPUT_LOW,  EPWM_AQ_OUTPUT_ON_TIMEBASE_UP_CMPA);
+
+#elif (SECILEN_PWM_MODU == MOD_DOWN)
+    // ADIM 2: Sayma Modu (Down)
+    EPWM_setTimeBaseCounterMode(EPWM1_BASE, EPWM_COUNTER_MODE_DOWN);
+    EPWM_disablePhaseShiftLoad(EPWM1_BASE);
+    EPWM_setTimeBaseCounter(EPWM1_BASE, 0U);
+
+    // ADIM 3: Frekans ve Duty Ayarı (Başlangıç: 250 Hz, %50 Duty)
+    setPWM_Frekans_ve_Duty(250, 50);
+
+    // ADIM 4: Pin Eylemleri 
+    EPWM_setActionQualifierAction(EPWM1_BASE, EPWM_AQ_OUTPUT_A, EPWM_AQ_OUTPUT_HIGH, EPWM_AQ_OUTPUT_ON_TIMEBASE_DOWN_CMPA);
+    EPWM_setActionQualifierAction(EPWM1_BASE, EPWM_AQ_OUTPUT_A, EPWM_AQ_OUTPUT_LOW,  EPWM_AQ_OUTPUT_ON_TIMEBASE_ZERO);
+#endif
+
+    // ADIM 5: Dead-Band (Ölü Zaman) Ayarı
+    EPWM_setDeadBandDelayMode(EPWM1_BASE, EPWM_DB_RED, true);
+    EPWM_setDeadBandDelayMode(EPWM1_BASE, EPWM_DB_FED, true);
+
+    // Polarite Seçimi: B sinyali terslenir (Complementary)
+    EPWM_setDeadBandDelayPolarity(EPWM1_BASE, EPWM_DB_RED, EPWM_DB_POLARITY_ACTIVE_HIGH);
+    EPWM_setDeadBandDelayPolarity(EPWM1_BASE, EPWM_DB_FED, EPWM_DB_POLARITY_ACTIVE_LOW);
+
+    // Ölü Zaman Süresi (Test için 2500 yazmıştık, gerçeğe dönmek istersen 25 yapabilirsin)
+    EPWM_setRisingEdgeDelayCount(EPWM1_BASE, 2500U);
+    EPWM_setFallingEdgeDelayCount(EPWM1_BASE, 2500U);
+}
